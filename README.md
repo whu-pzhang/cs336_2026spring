@@ -1,12 +1,12 @@
 # CS336 (2026) — Language Models From Scratch
 
-伞形仓库：每个作业是官方 assignment 的 **git submodule**，在对应目录里实现与测试。
+个人课程仓库：官方作业脚手架以**普通目录**形式纳入本仓（非 submodule），实现与笔记都只提交到本仓库，不 push 到 Stanford 官方仓。
 
 ## 结构
 
 ```text
 cs336_2026/
-├── assignment1-basics/      # submodule: tokenization, Transformer, train loop
+├── assignment1-basics/      # Basics：tokenization, Transformer, train loop
 ├── assignment2-systems/     # (稍后) kernels, DDP, profiling
 ├── assignment3-scaling/     # (稍后) scaling laws
 ├── assignment4-data/        # (稍后) filtering, dedup
@@ -16,7 +16,6 @@ cs336_2026/
     ├── assignment2/         # …
     └── …
 ```
-
 
 ## 环境
 
@@ -33,50 +32,23 @@ uv run pytest
 
 实现代码写在 `cs336_basics/`，并通过 `tests/adapters.py` 对接测试。Handout：`cs336_assignment1_basics.pdf`。
 
-## 拉取 / 更新官方脚手架（submodule）
+## 工作流
 
-首次 clone 本仓库后初始化子模块：
+- 在对应 `assignmentN-*/` 目录中修改代码与跑测试。
+- 书面题与实验记录写在 `notes/assignmentN/`。
+- **所有提交都在本仓库完成**；不要把作业目录重新初始化成指向官方仓的 git 仓库后误 push。
 
-```bash
-git submodule update --init --recursive
-```
+### 同步官方脚手架更新（可选）
 
-新增作业（示例）：
-
-```bash
-git submodule add https://github.com/stanford-cs336/assignment1-basics.git assignment1-basics
-git submodule add https://github.com/stanford-cs336/assignment2-systems.git assignment2-systems
-git submodule add https://github.com/stanford-cs336/assignment3-scaling.git assignment3-scaling
-git submodule add https://github.com/stanford-cs336/assignment4-data.git assignment4-data
-git submodule add https://github.com/stanford-cs336/assignment5-alignment.git assignment5-alignment
-```
-
-拉取官方脚手架更新：
+需要对照 Stanford 上游变更时，在仓库外临时 clone，再 diff / 手动合并：
 
 ```bash
-# 更新某一个
-git submodule update --remote assignment1-basics
-
-# 或更新全部
-git submodule update --remote --merge
+git clone --depth 1 https://github.com/stanford-cs336/assignment1-basics.git /tmp/a1-upstream
+diff -ru /tmp/a1-upstream/tests assignment1-basics/tests
+# 确认后只合并你需要的文件；不要在 assignment1-basics/ 里重新 git init 并 push 到官方仓
 ```
 
-在子模块内提交你的实现（每个作业仓库各自有独立 history）：
-
-```bash
-cd assignment1-basics
-git checkout -b my-work   # 如需要
-# ... 编辑 cs336_basics/、tests/adapters.py ...
-git add -A && git commit -m "WIP: assignment1"
-```
-
-然后在伞形仓库记录子模块指针：
-
-```bash
-cd ..
-git add assignment1-basics
-git commit -m "Bump assignment1-basics submodule pointer"
-```
+日常开发把本仓库当普通单仓即可，无需 submodule 相关命令。
 
 ## 官方链接
 
