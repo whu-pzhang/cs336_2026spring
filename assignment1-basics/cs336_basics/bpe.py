@@ -1,35 +1,108 @@
+import os
+from typing import BinaryIO
 from collections import Counter
 
 import regex as re
 
-GPT2_PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+GPT2_SPLIT_PATTERN = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+GPT2_SPLIT_PATTERN_RE = re.compile(GPT2_SPLIT_PATTERN)
 
 
-test_msg = """low low low low low lower lower widest widest widest newest newest newest newest newest newest"""
+def find_chunk_boundaries(
+    file: BinaryIO,
+    desired_num_chunks: int,
+    split_special_token: bytes,
+) -> list[int]:
+    """
+    Chunk the file into parts that can be counted independently.
+    May return fewer chunks if the boundaries end up overlapping.
+    """
+    assert isinstance(split_special_token, bytes), "Must represent special token as a bytestring"
 
-s = re.findall(GPT2_PAT, test_msg)
+    # Get total file size in bytes
+    file.seek(0, os.SEEK_END)
+    file_size = file.tell()
+    file.seek(0)
+
+    chunk_size = file_size // desired_num_chunks
+
+    # Initial guesses for chunk boundary locations, uniformly spaced
+    # Chunks start on previous index, don't include last index
+    chunk_boundaries = [i * chunk_size for i in range(desired_num_chunks + 1)]
+    chunk_boundaries[-1] = file_size
+
+    mini_chunk_size = 4096  # Read ahead by 4k bytes at a time
+
+    for bi in range(1, len(chunk_boundaries) - 1):
+        initial_position = chunk_boundaries[bi]
+        file.seek(initial_position)  # Start at boundary guess
+        while True:
+            mini_chunk = file.read(mini_chunk_size)  # Read a mini chunk
+
+            # If EOF, this boundary should be at the end of the file
+            if mini_chunk == b"":
+                chunk_boundaries[bi] = file_size
+                break
+
+            # Find the special token in the mini chunk
+            found_at = mini_chunk.find(split_special_token)
+            if found_at != -1:
+                chunk_boundaries[bi] = initial_position + found_at
+                break
+            initial_position += mini_chunk_size
+
+    # Make sure all boundaries are unique, but might be fewer than desired_num_chunks
+    return sorted(set(chunk_boundaries))
 
 
-freq = Counter(test_msg.split())
 
 
-class BPETokenizer:
-    def __init__(self, vocab_size: int, special_tokens: list[str]):
-        self.vocab = {i: bytes([i]) for i in range(256)}  # int -> bytes
-        self.merges = []  # list[tuple[bytes, bytes]]
-        self.special_tokens = special_tokens
-        for token in special_tokens:
-            self.vocab[len(self.vocab)] = token.encode("utf-8")
+def pre_tokenize(input_path, special_tokens: list[str]) -> dict[tuple[bytes, ...], int]:
+    with open(input_path, "rb") as f:
+        text = f.read().decode("utf-8", errors="ignore")
 
-        assert vocab_size > len(self.vocab), (
-            "vocab_size must be greater than the number of vocabulary tokens (including special tokens)"
-        )
-        self.num_merges = vocab_size - len(self.vocab)
+    special_tokens = sorted(special_tokens, key=len, reverse=True)
+    escaped_specials = [re.escape(token) for token in special_tokens]
+    if escaped_specials:
+        special_pattern = "|".join(escaped_specials)
+        special_regex = re.compile(special_pattern)
+    else:
+        special_regex = None
 
 
-def pre_tokenize(input_path, special_tokens: list[str]) -> list[str]:
-    with open(input_path, encoding="utf-8") as f:
-        text = f.read()
+    # Find all special token spans in the text: (start, end, matched token)
+    special_spans = []
+    if special_regex:
+        for match in special_regex.finditer(text):
+            start, end = match.span()
+            special_spans.append((start, end, match.group(0)))
 
-    for chunk in re.finditer(GPT2_PAT, text):
-        pass
+
+    # Count all token spans in the text
+    token_counter = Counter()
+    current_pos = 0
+
+    def count_ordinary_text(chunk:str) -> None:
+        for token_match in GPT2_SPLIT_PATTERN_RE.finditer(chunk):
+            token_str = token_match.group(0)
+            token_bytes_tuple = tuple(bytes([b]) for b in token_str.encode("utf-8"))
+            token_counter[token_bytes_tuple] += 1
+
+    for start, end, special_token in special_spans:
+        if current_pos < start:
+            text_chunk = text[current_pos:start]
+            count_ordinary_text(text_chunk)
+
+        current_pos = end
+
+    # Count any remaining text
+    if current_pos < len(text):
+        remaining_chunk = text[current_pos:]
+        count_ordinary_text(remaining_chunk)
+
+    return dict(token_counter)
+
+
+
+def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
+    pass
