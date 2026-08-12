@@ -55,8 +55,6 @@ def find_chunk_boundaries(
     return sorted(set(chunk_boundaries))
 
 
-
-
 def pre_tokenize(input_path, special_tokens: list[str]) -> dict[tuple[bytes, ...], int]:
     with open(input_path, "rb") as f:
         text = f.read().decode("utf-8", errors="ignore")
@@ -69,40 +67,77 @@ def pre_tokenize(input_path, special_tokens: list[str]) -> dict[tuple[bytes, ...
     else:
         special_regex = None
 
-
-    # Find all special token spans in the text: (start, end, matched token)
-    special_spans = []
     if special_regex:
-        for match in special_regex.finditer(text):
-            start, end = match.span()
-            special_spans.append((start, end, match.group(0)))
-
+        text_chunks = special_regex.split(text)
+    else:
+        text_chunks = [text]
 
     # Count all token spans in the text
     token_counter = Counter()
-    current_pos = 0
 
-    def count_ordinary_text(chunk:str) -> None:
-        for token_match in GPT2_SPLIT_PATTERN_RE.finditer(chunk):
+    for text_chunk in text_chunks:
+        for token_match in GPT2_SPLIT_PATTERN_RE.finditer(text_chunk):
             token_str = token_match.group(0)
             token_bytes_tuple = tuple(bytes([b]) for b in token_str.encode("utf-8"))
             token_counter[token_bytes_tuple] += 1
 
-    for start, end, special_token in special_spans:
-        if current_pos < start:
-            text_chunk = text[current_pos:start]
-            count_ordinary_text(text_chunk)
-
-        current_pos = end
-
-    # Count any remaining text
-    if current_pos < len(text):
-        remaining_chunk = text[current_pos:]
-        count_ordinary_text(remaining_chunk)
-
     return dict(token_counter)
 
 
-
 def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
-    pass
+
+    # vocabulary initialization
+    vocab = {i: bytes([i]) for i in range(256)}
+    if special_tokens:
+        for token in special_tokens:
+            vocab[len(vocab)] = token.encode("utf-8")
+
+    assert vocab_size >= len(vocab), "Vocab size must be greater than the number of special tokens"
+
+    # pre-tokenize the text
+    token_counter = pre_tokenize(input_path, special_tokens)
+
+    def get_stats(bytes_tuple: tuple[bytes, ...], token_counter: dict = None, cnt: int = 0) -> Counter:
+        counts = {} if token_counter is None else token_counter
+        for pair in zip(bytes_tuple, bytes_tuple[1:]):
+            counts[pair] = counts.get(pair, 0) + cnt
+        return counts
+
+    # merge tokens
+    merges: list[tuple[bytes, bytes]] = []
+    num_merges = vocab_size - len(vocab)
+    for _ in range(num_merges):
+        stats = {}
+        for bytes_tuple, count in token_counter.items():
+            get_stats(bytes_tuple, stats, count)
+
+        # Prefer highest frequency; break ties by lexicographically largest pair (one pass).
+        pair = max(stats, key=lambda p: (stats[p], p))
+
+        # merge
+        new_token = pair[0] + pair[1]
+        vocab[len(vocab)] = new_token
+        merges.append(pair)
+
+        new_counter = {}
+        for bytes_tuple, count in token_counter.items():
+            new_byte_tuple = []
+            i = 0
+            while i < len(bytes_tuple):
+                if i < len(bytes_tuple) - 1 and bytes_tuple[i] == pair[0] and bytes_tuple[i + 1] == pair[1]:
+                    new_byte_tuple.append(new_token)
+                    i += 2
+                else:
+                    new_byte_tuple.append(bytes_tuple[i])
+                    i += 1
+
+            new_counter[tuple(new_byte_tuple)] = new_counter.get(tuple(new_byte_tuple), 0) + count
+        token_counter = new_counter
+
+    return vocab, merges
+
+
+if __name__ == "__main__":
+    vocab, merges = train_bpe("tests/fixtures/tinystories_sample.txt", 259, ["<|endoftext|>"])
+    print(vocab)
+    print(merges)
