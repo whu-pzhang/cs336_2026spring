@@ -72,16 +72,16 @@ def pre_tokenize(input_path, special_tokens: list[str]) -> dict[tuple[bytes, ...
     else:
         text_chunks = [text]
 
-    # Count all token spans in the text
-    token_counter = Counter()
+    # pretok sequence (tuple of byte symbols) → corpus frequency
+    word_counts = Counter()
 
     for text_chunk in text_chunks:
         for token_match in GPT2_SPLIT_PATTERN_RE.finditer(text_chunk):
             token_str = token_match.group(0)
-            token_bytes_tuple = tuple(bytes([b]) for b in token_str.encode("utf-8"))
-            token_counter[token_bytes_tuple] += 1
+            word = tuple(bytes([b]) for b in token_str.encode("utf-8"))
+            word_counts[word] += 1
 
-    return dict(token_counter)
+    return dict(word_counts)
 
 
 def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
@@ -94,50 +94,75 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
 
     assert vocab_size >= len(vocab), "Vocab size must be greater than the number of special tokens"
 
-    # pre-tokenize the text
-    token_counter = pre_tokenize(input_path, special_tokens)
+    # pretok sequence → how many times it appears in the corpus
+    word_counts = pre_tokenize(input_path, special_tokens)
 
-    def get_stats(bytes_tuple: tuple[bytes, ...], token_counter: dict = None, cnt: int = 0) -> Counter:
-        counts = {} if token_counter is None else token_counter
-        for pair in zip(bytes_tuple, bytes_tuple[1:]):
-            counts[pair] = counts.get(pair, 0) + cnt
+    def add_pair_counts(
+        word: tuple[bytes, ...],
+        pair_counts: dict | None = None,
+        freq: int = 0,
+    ) -> dict:
+        """Add this word's adjacent pairs into pair_counts, weighted by freq."""
+        counts = {} if pair_counts is None else pair_counts
+        for pair in zip(word, word[1:]):
+            counts[pair] = counts.get(pair, 0) + freq
         return counts
 
-    # merge tokens
+    def merge_pair(word: tuple[bytes, ...], pair: tuple[bytes, bytes]) -> tuple[bytes, ...]:
+        new_word = []
+        i = 0
+        while i < len(word):
+            if i < len(word) - 1 and word[i] == pair[0] and word[i + 1] == pair[1]:
+                new_word.append(pair[0] + pair[1])
+                i += 2
+            else:
+                new_word.append(word[i])
+                i += 1
+        return tuple(new_word)
+
+    def contain_pair(word: tuple[bytes, ...], pair: tuple[bytes, bytes]) -> bool:
+        for i in range(len(word) - 1):
+            if word[i] == pair[0] and word[i + 1] == pair[1]:
+                return True
+        return False
+
     merges: list[tuple[bytes, bytes]] = []
     num_merges = vocab_size - len(vocab)
+
+    # pair (left_symbol, right_symbol) → weighted occurrences across the corpus
+    pair_counts = {}
+    for word, freq in word_counts.items():
+        add_pair_counts(word, pair_counts, freq)
+
     for _ in range(num_merges):
-        stats = {}
-        for bytes_tuple, count in token_counter.items():
-            get_stats(bytes_tuple, stats, count)
-
         # Prefer highest frequency; break ties by lexicographically largest pair (one pass).
-        pair = max(stats, key=lambda p: (stats[p], p))
+        best_pair = max(pair_counts, key=lambda p: (pair_counts[p], p))
+        merges.append(best_pair)
 
-        # merge
-        new_token = pair[0] + pair[1]
-        vocab[len(vocab)] = new_token
-        merges.append(pair)
+        merged = best_pair[0] + best_pair[1]
+        vocab[len(vocab)] = merged
 
-        new_counter = {}
-        for bytes_tuple, count in token_counter.items():
-            new_byte_tuple = []
-            i = 0
-            while i < len(bytes_tuple):
-                if i < len(bytes_tuple) - 1 and bytes_tuple[i] == pair[0] and bytes_tuple[i + 1] == pair[1]:
-                    new_byte_tuple.append(new_token)
-                    i += 2
-                else:
-                    new_byte_tuple.append(bytes_tuple[i])
-                    i += 1
+        affected_words = []
+        for word, freq in word_counts.items():
+            if contain_pair(word, best_pair):
+                affected_words.append((word, freq))
 
-            new_counter[tuple(new_byte_tuple)] = new_counter.get(tuple(new_byte_tuple), 0) + count
-        token_counter = new_counter
+        for word, freq in affected_words:
+            # remove best_pair from word
+            add_pair_counts(word, pair_counts, -freq)
+            new_word = merge_pair(word, best_pair)
+            # add new pair counts
+            add_pair_counts(new_word, pair_counts, freq)
+
+            # update word counts
+            word_counts[new_word] = word_counts.get(new_word, 0) + freq
+            del word_counts[word]
+
+        # remove 0 count pairs
+        pair_counts = {p: c for p, c in pair_counts.items() if c > 0}
 
     return vocab, merges
 
 
 if __name__ == "__main__":
-    vocab, merges = train_bpe("tests/fixtures/tinystories_sample.txt", 259, ["<|endoftext|>"])
-    print(vocab)
-    print(merges)
+    vocab, merges = train_bpe("tests/fixtures/corpus.en", 500, ["<|endoftext|>"])
