@@ -1,6 +1,7 @@
 import os
-from typing import BinaryIO
 from collections import Counter
+from collections.abc import Iterable
+from typing import BinaryIO
 
 import regex as re
 
@@ -162,6 +163,24 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
         pair_counts = {p: c for p, c in pair_counts.items() if c > 0}
 
     return vocab, merges
+
+
+class Tokenizer:
+    def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] = None):
+        self.vocab = vocab
+        self.merges = merges
+
+    def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] = None):
+        pass
+
+    def encode(self, text: str) -> list[int]:
+        pass
+
+    def encode_iterable(self, iterable: Iterable[str]) -> list[int]:
+        pass
+
+    def decode(self, ids: list[int]) -> str:
+        pass
 
 
 if __name__ == "__main__":
