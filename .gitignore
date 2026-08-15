@@ -45,6 +45,8 @@ datasets/
 *.pth
 *.ckpt
 *.safetensors
+# Keep assignment1 unit-test fixture weights tracked
+!assignment1-basics/tests/fixtures/ts_tests/model.pt
 checkpoints/
 outputs/
 runs/
