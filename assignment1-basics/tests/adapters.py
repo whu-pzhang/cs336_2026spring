@@ -14,12 +14,14 @@ from cs336_basics.llm import (
     Linear,
     RMSNorm,
     RotaryPositionalEmbedding,
+    silu,
     SwiGLU,
     softmax,
     scaled_dot_product_attention,
     MultiHeadAttention,
     TransformerBlock,
     TransformerLM,
+    cross_entropy,
 )
 from cs336_basics.tokenizer import train_bpe, Tokenizer
 
@@ -448,7 +450,7 @@ def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
         Float[Tensor,"..."]: of with the same shape as `in_features` with the output of applying
         SiLU to each element.
     """
-    raise NotImplementedError
+    return silu(in_features)
 
 
 def run_get_batch(
@@ -505,7 +507,7 @@ def run_cross_entropy(
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
-    raise NotImplementedError
+    return cross_entropy(inputs, targets)
 
 
 def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:

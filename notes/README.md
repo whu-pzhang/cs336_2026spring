@@ -1,9 +1,10 @@
 # Notes
 
-按作业分目录存放书面题草稿与实验记录：
+总进度见 [`progress.md`](./progress.md)。按作业分目录存放书面题草稿与实验记录：
 
 ```text
 notes/
+├── progress.md    # 各作业进度（实现 / 单测 / 书面 / 实验）
 ├── assignment1/   # Basics：tokenizer、Transformer、训练
 ├── assignment2/   # Systems（稍后）
 ├── assignment3/   # Scaling（稍后）

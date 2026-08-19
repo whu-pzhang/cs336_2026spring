@@ -1,6 +1,6 @@
 import torch
 from einops import einsum, rearrange
-from torch import nn
+from torch import nn, unsqueeze
 from typing import Optional
 
 
@@ -56,6 +56,10 @@ class RMSNorm(nn.Module):
         return result
 
 
+def silu(x: torch.Tensor) -> torch.Tensor:
+    return x * torch.sigmoid(x)
+
+
 class SwiGLU(nn.Module):
     def __init__(self, d_model: int, d_ff: int, device=None, dtype=None) -> None:
         super().__init__()
@@ -70,7 +74,7 @@ class SwiGLU(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x1 = self.w1(x)
-        x2 = (x1 * torch.sigmoid(x1)) * self.w3(x)
+        x2 = silu(x1) * self.w3(x)
         result = self.w2(x2)
         return result
 
@@ -213,3 +217,12 @@ class TransformerLM(nn.Module):
         x = self.ln_final(x)
         x = self.lm_head(x)
         return x
+
+
+def cross_entropy(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    max_logits, _ = torch.max(logits, dim=-1, keepdim=True)
+    shifted = logits - max_logits
+    log_sum_exp = torch.log(shifted.exp().sum(dim=-1, keepdim=True))
+    log_probs = shifted - log_sum_exp
+    loss = -log_probs.gather(dim=-1, index=targets.unsqueeze(-1)).squeeze(-1)
+    return loss.mean()
