@@ -1,7 +1,8 @@
 import os
 from collections import Counter
-from collections.abc import Iterable
-from typing import BinaryIO
+from collections.abc import Iterable, Iterator
+from typing import BinaryIO, Optional
+import json
 
 import regex as re
 
@@ -166,22 +167,127 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
 
 
 class Tokenizer:
-    def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] = None):
+    def __init__(
+        self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: Optional[list[str]] = None
+    ):
         self.vocab = vocab
         self.merges = merges
+        self.special_tokens = special_tokens or []
 
-    def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] = None):
-        pass
+        self.id_to_bytes = {k: v for k, v in vocab.items()}
+        self.bytes_to_id = {v: k for k, v in vocab.items()}
+
+        # byte value -> token id
+        self.byte_to_id = [self.bytes_to_id[bytes([i])] for i in range(256)]
+
+        self.special_to_id = {}
+        # add special tokens to vocab
+        for tok in self.special_tokens:
+            tok_bytes = tok.encode("utf-8")
+            if tok_bytes not in self.bytes_to_id:
+                new_id = max(self.vocab.keys()) + 1
+                self.vocab[new_id] = tok_bytes
+                self.bytes_to_id[tok_bytes] = new_id
+                self.id_to_bytes[new_id] = tok_bytes
+            self.special_to_id[tok] = self.bytes_to_id[tok_bytes]
+
+        if self.special_tokens:
+            pattern = "|".join(re.escape(t) for t in sorted(self.special_tokens, key=len, reverse=True))
+            self.special_splitter = re.compile(f"({pattern})")
+        else:
+            self.special_splitter = None
+
+        # 构建 BPE 合并信息 (id pair -> (merged_id, rank))
+        #   rank = 合并在 merges 列表中的位置（越小越先合并）
+        self.merge_info: dict[tuple[int, int], tuple[int, int]] = {}
+        for rank, (b1, b2) in enumerate(merges):
+            id1 = self.bytes_to_id[b1]
+            id2 = self.bytes_to_id[b2]
+            merged_bs = b1 + b2
+            merged_id = self.bytes_to_id[merged_bs]
+            self.merge_info[(id1, id2)] = (merged_id, rank)
+
+    @classmethod
+    def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: Optional[list[str]] = None):
+        with open(vocab_filepath, "r", encoding="utf-8") as f:
+            vocab_json = json.load(f)
+        vocab = {int(k): v.encode("utf-8") for k, v in vocab_json.items()}
+
+        merges = []
+        with open(merges_filepath, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split(maxsplit=2)
+                if len(parts) >= 2:
+                    merges.append((parts[0].encode("utf-8"), parts[1].encode("utf-8")))
+        return cls(vocab, merges, special_tokens)
+
+    def _bpe_encode_pretoken(self, pre_token: bytes) -> list[int]:
+        parts = [self.byte_to_id[b] for b in pre_token]
+
+        while True:
+            best_rank = len(self.merges)
+            best_idx = -1
+
+            for i in range(len(parts) - 1):
+                info = self.merge_info.get((parts[i], parts[i + 1]), None)
+                if info is not None:
+                    rank = info[1]
+                    if rank < best_rank:
+                        best_rank = rank
+                        best_idx = i
+
+            if best_idx == -1:
+                break
+
+            merged_id = self.merge_info[(parts[best_idx], parts[best_idx + 1])][0]
+            parts[best_idx] = merged_id
+            del parts[best_idx + 1]
+
+        return parts
+
+    def _encode_plain_text(self, text: str) -> list[int]:
+        token_ids = []
+        for match in GPT2_SPLIT_PATTERN_RE.finditer(text):
+            pre_token = match.group().encode("utf-8")
+            token_ids.extend(self._bpe_encode_pretoken(pre_token))
+        return token_ids
 
     def encode(self, text: str) -> list[int]:
-        pass
+        if not self.special_tokens:
+            return self._encode_plain_text(text)
 
-    def encode_iterable(self, iterable: Iterable[str]) -> list[int]:
-        pass
+        parts = self.special_splitter.split(text)
+        result = []
+        for part in parts:
+            if part in self.special_to_id:
+                result.append(self.special_to_id[part])
+            else:
+                result.extend(self._encode_plain_text(part))
+        return result
+
+    def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
+        for text in iterable:
+            yield from self.encode(text)
 
     def decode(self, ids: list[int]) -> str:
-        pass
+        all_bytes = b"".join(self.id_to_bytes[id] for id in ids)
+        return all_bytes.decode("utf-8", errors="replace")
 
 
 if __name__ == "__main__":
-    vocab, merges = train_bpe("tests/fixtures/corpus.en", 500, ["<|endoftext|>"])
+    from pathlib import Path
+    from tests.test_tokenizer import get_tokenizer_from_vocab_merges_path
+
+    FIXTURES_PATH = Path("tests/fixtures")
+
+    VOCAB_PATH = FIXTURES_PATH / "gpt2_vocab.json"
+    MERGES_PATH = FIXTURES_PATH / "gpt2_merges.txt"
+
+    tokenizer = get_tokenizer_from_vocab_merges_path(VOCAB_PATH, MERGES_PATH, special_tokens=["<|endoftext|>"])
+
+    txt = "Hello <|endoftext|> world"
+
+    tokenizer.encode(txt)

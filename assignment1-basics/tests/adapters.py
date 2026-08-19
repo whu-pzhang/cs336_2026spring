@@ -21,7 +21,7 @@ from cs336_basics.llm import (
     TransformerBlock,
     TransformerLM,
 )
-from cs336_basics.tokenizer import train_bpe
+from cs336_basics.tokenizer import train_bpe, Tokenizer
 
 
 def run_linear(
@@ -171,7 +171,7 @@ def run_multihead_self_attention(
             "q_proj.weight": q_proj_weight,
             "k_proj.weight": k_proj_weight,
             "v_proj.weight": v_proj_weight,
-            "o_proj.weight": o_proj_weight,
+            "output_proj.weight": o_proj_weight,
         }
     )
     result = mha(in_features)
@@ -221,7 +221,7 @@ def run_multihead_self_attention_with_rope(
             "q_proj.weight": q_proj_weight,
             "k_proj.weight": k_proj_weight,
             "v_proj.weight": v_proj_weight,
-            "o_proj.weight": o_proj_weight,
+            "output_proj.weight": o_proj_weight,
         }
     )
     result = mha(in_features, token_positions)
@@ -615,7 +615,8 @@ def get_tokenizer(
     Returns:
         A BPE tokenizer that uses the provided vocab, merges, and special tokens.
     """
-    raise NotImplementedError
+    tokenizer = Tokenizer(vocab, merges, special_tokens)
+    return tokenizer
 
 
 def run_train_bpe(
