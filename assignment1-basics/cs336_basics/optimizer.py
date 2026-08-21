@@ -76,5 +76,29 @@ class AdamW(torch.optim.Optimizer):
         return loss
 
 
-def get_lr_cosine_schedule(t: int, lr_max: float, lr_min: float, max_warmup_step: int, final_step: int):
-    pass
+def get_lr_cosine_schedule(it: int, lr_max: float, lr_min: float, warmup_iters: int, cosine_cycle_iters: int):
+    assert it >= 0, "Iteration must be non-negative"
+    assert warmup_iters > 0, "Warmup iterations must be positive"
+    assert cosine_cycle_iters > 0, "Cosine cycle iterations must be positive"
+    assert lr_max > lr_min, "Maximum learning rate must be greater than minimum learning rate"
+    assert cosine_cycle_iters > warmup_iters, "Cosine cycle iterations must be greater than warmup iterations"
+
+    if it < warmup_iters:
+        lr = it / warmup_iters * lr_max
+    elif it <= cosine_cycle_iters:
+        lr = lr_min + 0.5 * (1 + math.cos((it - warmup_iters) / (cosine_cycle_iters - warmup_iters) * math.pi)) * (
+            lr_max - lr_min
+        )
+    else:
+        lr = lr_min
+
+    return lr
+
+
+def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float, eps: float = 1e-6):
+    parameters_with_grad = [p for p in parameters if p.grad is not None]
+
+    total_norm = torch.sqrt(sum((p.grad**2).sum() for p in parameters_with_grad))
+    if total_norm > max_l2_norm:
+        for p in parameters_with_grad:
+            p.grad.mul_(max_l2_norm / (total_norm + eps))
