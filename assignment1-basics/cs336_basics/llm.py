@@ -1,6 +1,6 @@
 import torch
 from einops import einsum, rearrange
-from torch import nn, unsqueeze
+from torch import nn
 from typing import Optional
 
 

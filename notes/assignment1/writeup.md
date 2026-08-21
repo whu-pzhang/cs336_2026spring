@@ -194,3 +194,135 @@ context_length=1024时，各模型MHA和FFN FLOPs如下：
 **(e)** 
 
 GPT-2 XL若context_length 增大至 16384, 相比1024增大了16倍。投影/FFN/lm_head 随 T 乘 16、QKᵀ/attn@V 随 T² 乘 256。投影/FFN/lm_head 份额下降，attention scores 份额上升并成为最大头
+
+---
+
+## 4 Training a Transformer LM
+
+### adamw_accounting：Resource accounting for training with AdamW（2 分）
+
+#### 题干
+
+Assume we are using float32 for every tensor.
+
+**(a)** How much peak memory does running AdamW require? Decompose your answer based on the memory usage of the parameters, activations, gradients, and optimizer state. Express your answer in terms of the `batch_size` and the model hyperparameters (`vocab_size`, `context_length`, `num_layers`, `d_model`, `num_heads`). Assume `d_ff = (8/3) × d_model`.
+
+For simplicity, when calculating memory usage of activations, consider only the components listed in the handout (Transformer block internals, final RMSNorm, output embedding, cross-entropy on logits).
+
+Deliverable: A peak-memory expression decomposed into parameters / activations / gradients / optimizer state.
+
+**(b)** Instantiate your answer for a GPT-2 XL-shaped model (with **this assignment’s architecture**, not the original HuggingFace GPT-2) to get an expression that only depends on `batch_size`. What is the maximum batch size you can use and still fit within 80GB memory?
+
+Deliverable: An expression of the form \(a \cdot \text{batch\_size} + b\), and the maximum batch size.
+
+**(c)** How many FLOPs does running one step of AdamW take?
+
+Deliverable: A FLOP count (or a tight estimate) with a brief justification.
+
+**(d)** Model FLOPs utilization (MFU) is the ratio of observed throughput (in FLOP/s) to the hardware’s theoretical peak FLOP throughput. An NVIDIA A100 has a theoretical peak of 19.5 teraFLOP/s for float32. Assuming 50% MFU, how long would it take to train a GPT-2 XL-shaped model for 400K steps with batch size 1024 on a single A100? Assume the backward pass has twice the FLOPs of the forward pass.
+
+Deliverable: The number of days, with a brief justification.
+
+> 题干以 `cs336_assignment1_basics.pdf` 为准；若 PDF 里激活列表或 `d_ff` 假设与上文不完全一致，以 PDF 为准。
+
+#### 回答
+
+**(a)**
+
+- parameters:
+  
+  total_params = `embedding+num_layers*(MHA+FFN+2*RMSNorm)+ln_final+lm_head` 
+  
+  = `vocab_size*d_model + num_layers*(d_model*d_model*4+d_model*d_ff*3+2*d_model)+d_model+vocab_size*d_model`
+
+  = `2*vocab_size*d_model + num_layers*(12*d_model*d_model+2*d_model) + d_model`
+
+  按 单精度 float32 计算，模型参数占用显存
+
+  $$
+  \text{Memory} = (2 * \text{vocab\_size} * d_{model} + \text{num\_layers} * (12*d_{model}^2 + 2*d_{model}) + d_{model}) * 4
+  $$
+
+- activations:
+
+激活是指模型前向过程中的中间结果，和 batch_size 相关，按模块如下（各模块的输出tensor尺寸）：
+
+  - TransformerBlock
+    - RMSNorm: 2*(B, T, d_model)
+    - MHA:
+      - `q/k/v_proj`: 3*(B, T, d_model)
+      - $Q^T K$: (B, num_heads, T, T)
+      - softmax: (B, num_heads, T, T)
+      - `attn`: (B, T, d_model)
+      - `out_proj`: (B, T, d_model)
+    - FFN:  4*(B, T, d_ff)+(B, T, d_model)
+
+  transformer block 总共激活值= num_layers*(8*(B,T,d_model)+2*(B,num_heads,T,T)+4*(B,T,8/3*d_model)) = num_layers*(16*(B,T,d_model)+(B,T,8/3*d_model)+2*(B,num_heads,T,T))
+
+  - final_ln: (B, T, d_model)
+  - lm_head/logits: (B, T, vocab_size)
+
+  总激活值=(trasnformer_block + final_ln + logits) * 4 bytes
+
+  = num_layers*((16+8/3)*B*T*d_model+2*B*T*T*num_heads) + B*T*d_model + B*T*vocab_size
+
+
+- gradiants:
+
+  梯度每个参数都有一份，总数=`2*vocab_size*d_model + num_layers*(12*d_model*d_model+2*d_model) + d_model`
+
+- optimizer state:
+
+  采用AdamW优化器时，占显存的就是滑动平均量，为梯度的2倍
+
+  先做以下字符假设：
+
+  $$
+  \begin{align}
+  B &= \text{batch\_size} \\
+  V &= \text{vocab\_size} \\
+  D &= \text{d\_{model}} \\
+  L &= \text{num\_layers} \\
+  H &= \text{num\_heads} \\
+  T &= \text{context\_length}
+  \end{align}
+  $$
+
+$$
+\begin{align}
+\text{peak\_mem} &= \text{mem\_params} + \text{mem\_act} + \text{mem\_grads} + \text{mem\_opt} \\
+
+&= ((2*V*D + L*(12*D*D+2*D) + D) + 
+
++  L*((16+8/3)*B*T*D+2*B*T*T*H) + B*T*D + B*T*V 
+
++ (2*V*D + L*(12*D*D+2*D) + D) 
+
++ 2*(2*V*D + L*(12*D*D+2*D) + D)) * 4 bytes \\
+
+&= (4*(2VD+12LD^2+2LD+D) + \frac{56}{3}*LBTD+2LBT^2H + BTD + BTV)*4
+\end{align}
+$$
+
+**(b)**
+
+（待填：\(a\cdot B + b\)，以及 80GB 下最大 batch size）
+
+ 将 GPT-2 XL-shaped 的参数代入上式
+
+ V=50257, T=1024, L=48, D=1600, H=25
+
+ $$
+ \begin{align}
+ \text{total\_mem} &= (4*(2VD+12LD^2+2LD+D) + \frac{56}{3}*LBTD+2LBT^2H + BTD + BTV)*4 \\
+ &= 
+ \end{align}
+ $$
+
+**(c)**
+
+（待填：AdamW 一步的 FLOPs）
+
+**(d)**
+
+（待填：训练天数）
