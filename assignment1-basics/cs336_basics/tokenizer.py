@@ -1,8 +1,8 @@
+import json
 import os
 from collections import Counter
 from collections.abc import Iterable, Iterator
-from typing import BinaryIO, Optional
-import json
+from typing import BinaryIO
 
 import regex as re
 
@@ -86,7 +86,7 @@ def pre_tokenize(input_path, special_tokens: list[str]) -> dict[tuple[bytes, ...
     return dict(word_counts)
 
 
-def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
+def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str], return_history: bool = False):
 
     # vocabulary initialization
     vocab = {i: bytes([i]) for i in range(256)}
@@ -129,6 +129,8 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
         return False
 
     merges: list[tuple[bytes, bytes]] = []
+    # corpus frequency of each chosen pair, recorded before the merge is applied
+    merge_count_history: list[int] = []
     num_merges = vocab_size - len(vocab)
 
     # pair (left_symbol, right_symbol) → weighted occurrences across the corpus
@@ -137,9 +139,14 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
         add_pair_counts(word, pair_counts, freq)
 
     for _ in range(num_merges):
+        if not pair_counts:
+            # Corpus is fully merged (every pre-token is a single symbol); stop early.
+            print(f"train_bpe: no pairs left to merge after {len(merges)} merges; stopping early.")
+            break
         # Prefer highest frequency; break ties by lexicographically largest pair (one pass).
         best_pair = max(pair_counts, key=lambda p: (pair_counts[p], p))
         merges.append(best_pair)
+        merge_count_history.append(pair_counts[best_pair])
 
         merged = best_pair[0] + best_pair[1]
         vocab[len(vocab)] = merged
@@ -163,12 +170,14 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
         # remove 0 count pairs
         pair_counts = {p: c for p, c in pair_counts.items() if c > 0}
 
+    if return_history:
+        return vocab, merges, merge_count_history
     return vocab, merges
 
 
 class Tokenizer:
     def __init__(
-        self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: Optional[list[str]] = None
+        self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None
     ):
         self.vocab = vocab
         self.merges = merges
@@ -208,13 +217,13 @@ class Tokenizer:
             self.merge_info[(id1, id2)] = (merged_id, rank)
 
     @classmethod
-    def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: Optional[list[str]] = None):
-        with open(vocab_filepath, "r", encoding="utf-8") as f:
+    def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None):
+        with open(vocab_filepath, encoding="utf-8") as f:
             vocab_json = json.load(f)
         vocab = {int(k): v.encode("utf-8") for k, v in vocab_json.items()}
 
         merges = []
-        with open(merges_filepath, "r", encoding="utf-8") as f:
+        with open(merges_filepath, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -279,6 +288,7 @@ class Tokenizer:
 
 if __name__ == "__main__":
     from pathlib import Path
+
     from tests.test_tokenizer import get_tokenizer_from_vocab_merges_path
 
     FIXTURES_PATH = Path("tests/fixtures")

@@ -1,7 +1,7 @@
-import torch
-from typing import Optional
-from collections.abc import Callable, Iterable
 import math
+from collections.abc import Callable, Iterable
+
+import torch
 
 
 class AdamW(torch.optim.Optimizer):
@@ -28,7 +28,7 @@ class AdamW(torch.optim.Optimizer):
         super().__init__(params, defaults)
 
     @torch.no_grad()
-    def step(self, closure: Optional[Callable] = None):
+    def step(self, closure: Callable | None = None):
         loss = None
         if closure is not None:
             with torch.enable_grad():

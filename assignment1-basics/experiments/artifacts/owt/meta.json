@@ -1,0 +1,12 @@
+{
+  "corpus": "/Users/pzhang/repos/llm/cs336_2026spring/assignment1-basics/data/subsets/owt_5M.txt",
+  "corpus_chars": 5000000,
+  "vocab_size": 32768,
+  "special_tokens": [
+    "<|endoftext|>"
+  ],
+  "num_merges": 32511,
+  "train_seconds": 428.6,
+  "first_merge_count": 107844,
+  "last_merge_count": 3
+}

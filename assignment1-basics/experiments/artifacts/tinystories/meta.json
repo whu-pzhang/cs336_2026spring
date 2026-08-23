@@ -1,0 +1,13 @@
+{
+  "corpus": "/Users/pzhang/repos/llm/cs336_2026spring/assignment1-basics/data/subsets/tinystories_50M.txt",
+  "corpus_chars": 50000000,
+  "vocab_size": 32768,
+  "special_tokens": [
+    "<|endoftext|>",
+    "<|pad|>"
+  ],
+  "num_merges": 22684,
+  "train_seconds": 61.2,
+  "first_merge_count": 1425589,
+  "last_merge_count": 1
+}
