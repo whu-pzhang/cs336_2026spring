@@ -1,0 +1,18 @@
+{
+  "dataset": "owt",
+  "corpus": "data/subsets/owt_5M.txt",
+  "corpus_chars": 5000000,
+  "vocab_size": 32000,
+  "actual_vocab_size": 32000,
+  "special_tokens": [
+    "<|endoftext|>"
+  ],
+  "num_merges": 31743,
+  "train_seconds": 389.4,
+  "first_merge_count": 107844,
+  "last_merge_count": 3,
+  "longest_token_id": 31478,
+  "longest_token_bytes": [49, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 56, 56, 56, 49, 55, 56, 52, 49, 57, 55, 48, 48, 49, 50, 53, 50, 51, 50, 51, 51, 56, 57, 48, 53, 51, 51, 52, 52, 55, 50, 54, 53, 54, 50, 53],
+  "longest_token_length": 51,
+  "longest_token_utf8": "100000000000000088817841970012523233890533447265625"
+}

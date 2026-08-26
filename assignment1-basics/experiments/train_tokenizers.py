@@ -1,14 +1,9 @@
-"""Train BPE tokenizers on TinyStories / OWT subsets and export artifacts.
+"""Train the assignment BPE tokenizers and export reusable artifacts.
 
 Writeup questions covered:
-  - train_bpe_tinystories: vocab 32,768, specials ["
-
-", "<|pad|>"],
-    log-log plot of total merge counts over time.
-  - train_bpe_expts_owt: vocab 32,768, special ["
-
-"],
-    trained on the first 5M characters of OWT, same plot.
+  - train_bpe_tinystories: maximum vocabulary size 10,000.
+  - train_bpe_expts_owt: maximum vocabulary size 32,000, trained on the
+    provided 5M-character OWT subset.
 
 Artifacts per dataset go to experiments/artifacts/{name}/:
   vocab.json        {token_id: token_bytes as latin-1 string}
@@ -19,7 +14,8 @@ Artifacts per dataset go to experiments/artifacts/{name}/:
 Figures go to <repo_root>/notes/assignment1/figures/.
 
 Usage:
-  uv run python experiments/train_tokenizers.py [--dataset tinystories|owt|both]
+  uv run python experiments/train_tokenizers.py
+      [--dataset tinystories|owt|both] [--force]
 """
 
 import argparse
@@ -37,9 +33,6 @@ from cs336_basics.tokenizer import train_bpe
 ASSIGNMENT_DIR = Path(__file__).resolve().parent.parent
 ARTIFACTS_DIR = Path(__file__).resolve().parent / "artifacts"
 FIGURES_DIR = ASSIGNMENT_DIR.parent / "notes" / "assignment1" / "figures"
-
-VOCAB_SIZE = 32768
-
 
 # bytes <-> str via latin-1 is lossless (every byte maps to a codepoint 0-255)
 def _bytes_to_str(b: bytes) -> str:
@@ -64,6 +57,24 @@ def load_tokenizer_artifacts(out_dir: Path) -> tuple[dict[int, bytes], list[tupl
     with open(out_dir / "merges.json", encoding="utf-8") as f:
         merges = [(_str_to_bytes(a), _str_to_bytes(b)) for a, b in json.load(f)]
     return vocab, merges
+
+
+def artifact_matches_config(out_dir: Path, vocab_size: int, special_tokens: list[str]) -> bool:
+    """Return whether an existing artifact was trained with this configuration."""
+    required_files = ("vocab.json", "merges.json", "merge_counts.json", "meta.json")
+    if not all((out_dir / filename).exists() for filename in required_files):
+        return False
+    try:
+        with open(out_dir / "meta.json", encoding="utf-8") as f:
+            metadata = json.load(f)
+        vocab, _ = load_tokenizer_artifacts(out_dir)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    return (
+        len(vocab) == vocab_size
+        and metadata.get("vocab_size") == vocab_size
+        and metadata.get("special_tokens") == special_tokens
+    )
 
 
 def plot_merge_counts(counts: list[int], name: str, n_base_tokens: int) -> None:
@@ -92,46 +103,68 @@ def plot_merge_counts(counts: list[int], name: str, n_base_tokens: int) -> None:
     print(f"saved figure: {out_path}")
 
 
-def run_dataset(name: str, corpus_path: Path, special_tokens: list[str], n_chars: int) -> None:
+def run_dataset(name: str, config: dict, force: bool = False) -> None:
+    corpus_path = config["corpus_path"]
+    special_tokens = config["special_tokens"]
+    vocab_size = config["vocab_size"]
+    n_chars = config["n_chars"]
+    artifact_name = config["artifact_name"]
+    out_dir = ARTIFACTS_DIR / artifact_name
+
     print(f"\n=== {name} ===")
-    print(f"corpus: {corpus_path} (first {n_chars:,} chars), vocab_size={VOCAB_SIZE}, specials={special_tokens}")
+    print(f"corpus: {corpus_path} (first {n_chars:,} chars), vocab_size={vocab_size:,}, specials={special_tokens}")
+
+    if not force and artifact_matches_config(out_dir, vocab_size, special_tokens):
+        print(f"using existing artifact: {out_dir} (pass --force to retrain)")
+        return
 
     t0 = time.time()
-    vocab, merges, counts = train_bpe(str(corpus_path), VOCAB_SIZE, special_tokens, return_history=True)
+    vocab, merges, counts = train_bpe(str(corpus_path), vocab_size, special_tokens, return_history=True)
     elapsed = time.time() - t0
     print(f"training done in {elapsed / 60:.1f} min ({len(merges)} merges)")
 
-    out_dir = ARTIFACTS_DIR / name
     save_tokenizer(vocab, merges, out_dir)
     with open(out_dir / "merge_counts.json", "w") as f:
         json.dump(counts, f)
+    longest_token_id, longest_token = max(vocab.items(), key=lambda item: (len(item[1]), item[0]))
     meta = {
+        "dataset": name,
         "corpus": str(corpus_path),
         "corpus_chars": n_chars,
-        "vocab_size": VOCAB_SIZE,
+        "vocab_size": vocab_size,
+        "actual_vocab_size": len(vocab),
         "special_tokens": special_tokens,
         "num_merges": len(merges),
         "train_seconds": round(elapsed, 1),
-        "first_merge_count": counts[0],
-        "last_merge_count": counts[-1],
+        "first_merge_count": counts[0] if counts else None,
+        "last_merge_count": counts[-1] if counts else None,
+        "longest_token_id": longest_token_id,
+        "longest_token_bytes": list(longest_token),
+        "longest_token_length": len(longest_token),
+        "longest_token_utf8": longest_token.decode("utf-8", errors="replace"),
     }
     with open(out_dir / "meta.json", "w") as f:
         json.dump(meta, f, indent=2)
     print(f"saved artifacts: {out_dir}")
-    print(f"first merge count = {counts[0]:,}, last merge count = {counts[-1]:,}")
+    if counts:
+        print(f"first merge count = {counts[0]:,}, last merge count = {counts[-1]:,}")
 
-    plot_merge_counts(counts, name, n_base_tokens=256 + len(special_tokens))
+    plot_merge_counts(counts, artifact_name, n_base_tokens=256 + len(special_tokens))
 
 
 DATASETS = {
     "tinystories": {
         "corpus_path": ASSIGNMENT_DIR / "data" / "subsets" / "tinystories_50M.txt",
         "special_tokens": ["<|endoftext|>", "<|pad|>"],
+        "vocab_size": 10_000,
+        "artifact_name": "tinystories_10k",
         "n_chars": 50_000_000,
     },
     "owt": {
         "corpus_path": ASSIGNMENT_DIR / "data" / "subsets" / "owt_5M.txt",
         "special_tokens": ["<|endoftext|>"],
+        "vocab_size": 32_000,
+        "artifact_name": "owt_32k",
         "n_chars": 5_000_000,
     },
 }
@@ -140,13 +173,14 @@ DATASETS = {
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", choices=[*DATASETS, "both"], default="both")
+    parser.add_argument("--force", action="store_true", help="retrain even when the artifact already exists")
     args = parser.parse_args()
 
     names = list(DATASETS) if args.dataset == "both" else [args.dataset]
     for name in names:
         cfg = DATASETS[name]
         assert cfg["corpus_path"].exists(), f"missing corpus: {cfg['corpus_path']}"
-        run_dataset(name, cfg["corpus_path"], cfg["special_tokens"], cfg["n_chars"])
+        run_dataset(name, cfg, force=args.force)
 
 
 if __name__ == "__main__":

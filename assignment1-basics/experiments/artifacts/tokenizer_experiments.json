@@ -1,0 +1,74 @@
+{
+  "tinystories_tinystories": {
+    "dataset": "tinystories",
+    "tokenizer": "tinystories",
+    "documents": 10,
+    "seed": 42,
+    "n_tokens": 3352,
+    "n_bytes": 13554,
+    "bytes_per_token": 4.043556085918855,
+    "tokens_per_byte": 0.2473070680241995,
+    "seconds": 0.003118390217423439,
+    "throughput_bytes_per_second": 4346473.358038864,
+    "pile_825GB_seconds": 189809.0548453842,
+    "pile_825GB_hours": 52.72473745705117
+  },
+  "tinystories_owt": {
+    "dataset": "tinystories",
+    "tokenizer": "owt",
+    "documents": 10,
+    "seed": 42,
+    "n_tokens": 3514,
+    "n_bytes": 13554,
+    "bytes_per_token": 3.857142857142857,
+    "tokens_per_byte": 0.25925925925925924,
+    "seconds": 0.003867478109896183,
+    "throughput_bytes_per_second": 3504609.364256709,
+    "pile_825GB_seconds": 235404.2674239598,
+    "pile_825GB_hours": 65.39007428443328
+  },
+  "owt_tinystories": {
+    "dataset": "owt",
+    "tokenizer": "tinystories",
+    "documents": 10,
+    "seed": 42,
+    "n_tokens": 2039,
+    "n_bytes": 7315,
+    "bytes_per_token": 3.5875429131927414,
+    "tokens_per_byte": 0.2787423103212577,
+    "seconds": 0.002550470642745495,
+    "throughput_bytes_per_second": 2868098.0982104745,
+    "pile_825GB_seconds": 287647.0649712964,
+    "pile_825GB_hours": 79.90196249202678
+  },
+  "owt_owt": {
+    "dataset": "owt",
+    "tokenizer": "owt",
+    "documents": 10,
+    "seed": 42,
+    "n_tokens": 1692,
+    "n_bytes": 7315,
+    "bytes_per_token": 4.323286052009457,
+    "tokens_per_byte": 0.23130553656869446,
+    "seconds": 0.0029921233654022217,
+    "throughput_bytes_per_second": 2444752.139762348,
+    "pile_825GB_seconds": 337457.5224137844,
+    "pile_825GB_hours": 93.73820067049567
+  },
+  "throughput_tinystories": {
+    "tokenizer": "tinystories",
+    "n_bytes": 20869,
+    "seconds": 0.005668860860168934,
+    "throughput_bytes_per_second": 3681339.252235254,
+    "pile_825GB_seconds": 224103.22534090615,
+    "pile_825GB_hours": 62.250895928029486
+  },
+  "throughput_owt": {
+    "tokenizer": "owt",
+    "n_bytes": 20869,
+    "seconds": 0.006859601475298405,
+    "throughput_bytes_per_second": 3042305.019489804,
+    "pile_825GB_seconds": 271175.9651694467,
+    "pile_825GB_hours": 75.32665699151298
+  }
+}

@@ -1,4 +1,7 @@
 import argparse
+import json
+import time
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -38,7 +41,7 @@ def parse_args():
     parser.add_argument("--weight_decay", type=float, default=0.1)
     parser.add_argument("--max_grad_norm", type=float, default=1.0)
     parser.add_argument("--device", type=str, required=True)
-    parser.add_argument("--seed", type=int, default=42, required=True)
+    parser.add_argument("--seed", type=int, default=42)
 
     parser.add_argument("--checkpoint_path", type=str, required=True)
     parser.add_argument("--save_interval", type=int, default=1000)
@@ -46,6 +49,12 @@ def parse_args():
     parser.add_argument("--eval_iters", type=int, default=20)
     parser.add_argument("--eval_batch_size", type=int, default=16)
     parser.add_argument("--log_interval", type=int, default=50)
+    parser.add_argument(
+        "--log_path",
+        type=Path,
+        default=None,
+        help="optional JSONL path for train/validation metrics (defaults next to the checkpoint)",
+    )
 
     parser.add_argument("--resume", action="store_true")
 
@@ -53,12 +62,17 @@ def parse_args():
 
 
 def select_device(device):
-    if device == "cuda" and torch.cuda.is_available():
-        return torch.device("cuda")
-    elif device == "mps" and torch.backends.mps.is_available():
-        return torch.device("mps")
-    else:
-        return torch.device("cpu")
+    requested = torch.device(device)
+    if requested.type == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError(f"CUDA was requested but is unavailable: {device}")
+        if requested.index is not None and requested.index >= torch.cuda.device_count():
+            raise RuntimeError(f"CUDA device does not exist: {device}")
+    elif requested.type == "mps" and not torch.backends.mps.is_available():
+        raise RuntimeError("MPS was requested but is unavailable")
+    elif requested.type not in {"cpu", "cuda", "mps"}:
+        raise ValueError(f"unsupported device: {device}")
+    return requested
 
 
 def set_seed(seed):
@@ -76,6 +90,37 @@ def set_seed(seed):
 
 def load_data(path):
     return np.load(path, mmap_mode="r")
+
+
+def validate_args(args):
+    positive = {
+        "num_layers": args.num_layers,
+        "num_heads": args.num_heads,
+        "hidden_size": args.hidden_size,
+        "d_ff": args.d_ff,
+        "vocab_size": args.vocab_size,
+        "context_length": args.context_length,
+        "batch_size": args.batch_size,
+        "total_iters": args.total_iters,
+        "eval_batch_size": args.eval_batch_size,
+        "eval_iters": args.eval_iters,
+        "save_interval": args.save_interval,
+        "eval_interval": args.eval_interval,
+        "log_interval": args.log_interval,
+    }
+    invalid = [name for name, value in positive.items() if value <= 0]
+    if invalid:
+        raise ValueError(f"these arguments must be positive: {', '.join(invalid)}")
+    if args.hidden_size % args.num_heads != 0:
+        raise ValueError("hidden_size must be divisible by num_heads")
+    if args.learning_rate <= 0 or args.lr_min < 0 or args.learning_rate <= args.lr_min:
+        raise ValueError("require learning_rate > lr_min >= 0")
+    if args.warmup_iters >= args.total_iters:
+        raise ValueError("warmup_iters must be smaller than total_iters")
+    if not Path(args.train_path).exists():
+        raise FileNotFoundError(args.train_path)
+    if not Path(args.valid_path).exists():
+        raise FileNotFoundError(args.valid_path)
 
 
 def train_model(model, batch_data, optimizer, max_grad_norm, eps):
@@ -96,7 +141,7 @@ def train_model(model, batch_data, optimizer, max_grad_norm, eps):
 def eval_model(model, valid_data, eval_iters, eval_batch_size, context_length, device):
     model.eval()
     losses = []
-    for i in range(eval_iters):
+    for _ in range(eval_iters):
         x, y = get_batch(valid_data, eval_batch_size, context_length, device)
         logits = model(x)
         loss = cross_entropy(logits, y)
@@ -111,9 +156,15 @@ def update_lr(optimizer, lr):
 
 def main():
     args = parse_args()
+    validate_args(args)
 
     set_seed(args.seed)
     device = select_device(args.device)
+
+    checkpoint_path = Path(args.checkpoint_path)
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path = args.log_path or checkpoint_path.with_suffix(".jsonl")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
 
     model = TransformerLM(
         vocab_size=args.vocab_size,
@@ -137,7 +188,23 @@ def main():
 
     start_step = 0
     if args.resume:
-        start_step = load_checkpoint(args.checkpoint_path, model, optimizer)
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"cannot resume; checkpoint does not exist: {checkpoint_path}")
+        start_step = load_checkpoint(checkpoint_path, model, optimizer)
+
+    run_started = time.perf_counter()
+
+    def write_metric(step, learning_rate, train_loss, valid_loss=None):
+        record = {
+            "step": step,
+            "learning_rate": learning_rate,
+            "train_loss": train_loss,
+            "wall_time_seconds": time.perf_counter() - run_started,
+        }
+        if valid_loss is not None:
+            record["valid_loss"] = valid_loss
+        with log_path.open("a", encoding="utf-8") as file:
+            file.write(json.dumps(record) + "\n")
 
     for step in range(start_step + 1, args.total_iters + 1):
         lr = get_lr_cosine_schedule(step, args.learning_rate, args.lr_min, args.warmup_iters, args.total_iters)
@@ -148,14 +215,10 @@ def main():
 
         loss = train_model(model, batch_data, optimizer, args.max_grad_norm, args.eps)
 
-        if step % args.log_interval == 0:
-            print(f"Step {step} loss: {loss.item()}")
-
-        if step % args.save_interval == 0:
-            save_checkpoint(model, optimizer, step, args.checkpoint_path)
-
+        train_loss = loss.item()
+        valid_loss = None
         if step % args.eval_interval == 0:
-            loss_eval = eval_model(
+            valid_loss = eval_model(
                 model,
                 valid_data,
                 args.eval_iters,
@@ -163,8 +226,24 @@ def main():
                 args.context_length,
                 device,
             )
-            print(f"Step {step} eval loss: {loss_eval}")
             model.train()
+
+        if step % args.save_interval == 0:
+            save_checkpoint(model, optimizer, step, checkpoint_path)
+
+        if step % args.log_interval == 0 or valid_loss is not None:
+            write_metric(step, lr, train_loss, valid_loss)
+            message = f"step={step} train_loss={train_loss:.6f} lr={lr:.6g}"
+            if valid_loss is not None:
+                message += f" valid_loss={valid_loss:.6f}"
+            print(message)
+
+    # Always leave a checkpoint at the requested final iteration, even when
+    # total_iters is not an exact multiple of save_interval.
+    if start_step < args.total_iters and args.total_iters % args.save_interval != 0:
+        save_checkpoint(model, optimizer, args.total_iters, checkpoint_path)
+    print(f"saved checkpoint: {checkpoint_path}")
+    print(f"saved metrics: {log_path}")
 
 
 if __name__ == "__main__":

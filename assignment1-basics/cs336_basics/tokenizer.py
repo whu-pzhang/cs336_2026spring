@@ -1,12 +1,15 @@
+import heapq
 import json
 import os
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator
 from typing import BinaryIO
 
 import regex as re
 
 GPT2_SPLIT_PATTERN = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+# GPT-2 first splits text into manageable pieces, then applies BPE inside each piece.
+# Keeping whitespace attached to the following word is part of the GPT-2 behavior.
 GPT2_SPLIT_PATTERN_RE = re.compile(GPT2_SPLIT_PATTERN)
 
 
@@ -18,6 +21,9 @@ def find_chunk_boundaries(
     """
     Chunk the file into parts that can be counted independently.
     May return fewer chunks if the boundaries end up overlapping.
+
+    Each requested boundary is moved forward to the next occurrence of the
+    special token, so a special token is never split across two chunks.
     """
     assert isinstance(split_special_token, bytes), "Must represent special token as a bytestring"
 
@@ -58,9 +64,17 @@ def find_chunk_boundaries(
 
 
 def pre_tokenize(input_path, special_tokens: list[str]) -> dict[tuple[bytes, ...], int]:
+    """Count GPT-2 pre-tokenized byte sequences in a training corpus.
+
+    Special tokens are removed before applying the GPT-2 regex.  BPE training
+    operates on byte symbols, so each regex match is converted to a tuple of
+    one-byte elements and identical tuples are counted together.
+    """
     with open(input_path, "rb") as f:
         text = f.read().decode("utf-8", errors="ignore")
 
+    # Match longer special tokens first (for example, a double end-of-text
+    # token must not be consumed as two shorter tokens).
     special_tokens = sorted(special_tokens, key=len, reverse=True)
     escaped_specials = [re.escape(token) for token in special_tokens]
     if escaped_specials:
@@ -87,6 +101,7 @@ def pre_tokenize(input_path, special_tokens: list[str]) -> dict[tuple[bytes, ...
 
 
 def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str], return_history: bool = False):
+    """Train a byte-level BPE vocabulary by repeatedly merging the most common pair."""
 
     # vocabulary initialization
     vocab = {i: bytes([i]) for i in range(256)}
@@ -98,17 +113,6 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str], retur
 
     # pretok sequence → how many times it appears in the corpus
     word_counts = pre_tokenize(input_path, special_tokens)
-
-    def add_pair_counts(
-        word: tuple[bytes, ...],
-        pair_counts: dict | None = None,
-        freq: int = 0,
-    ) -> dict:
-        """Add this word's adjacent pairs into pair_counts, weighted by freq."""
-        counts = {} if pair_counts is None else pair_counts
-        for pair in zip(word, word[1:]):
-            counts[pair] = counts.get(pair, 0) + freq
-        return counts
 
     def merge_pair(word: tuple[bytes, ...], pair: tuple[bytes, bytes]) -> tuple[bytes, ...]:
         new_word = []
@@ -122,53 +126,87 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str], retur
                 i += 1
         return tuple(new_word)
 
-    def contain_pair(word: tuple[bytes, ...], pair: tuple[bytes, bytes]) -> bool:
-        for i in range(len(word) - 1):
-            if word[i] == pair[0] and word[i + 1] == pair[1]:
-                return True
-        return False
-
     merges: list[tuple[bytes, bytes]] = []
     # corpus frequency of each chosen pair, recorded before the merge is applied
     merge_count_history: list[int] = []
     num_merges = vocab_size - len(vocab)
 
-    # pair (left_symbol, right_symbol) → weighted occurrences across the corpus
-    pair_counts = {}
+    # pair -> weighted occurrences across the corpus.  pair_to_words is the
+    # important index: after a merge, only words containing that pair can change.
+    pair_counts: dict[tuple[bytes, bytes], int] = {}
+    pair_to_words: dict[tuple[bytes, bytes], set[tuple[bytes, ...]]] = defaultdict(set)
+
+    # count -> pairs currently having that count.  This avoids scanning every
+    # pair on every merge while preserving the required lexicographic tie-break.
+    count_buckets: dict[int, set[tuple[bytes, bytes]]] = defaultdict(set)
+    active_counts: set[int] = set()
+    count_heap: list[int] = []
+
+    def update_pair_count(pair: tuple[bytes, bytes], delta: int) -> None:
+        old_count = pair_counts.get(pair, 0)
+        if old_count:
+            count_buckets[old_count].discard(pair)
+            if not count_buckets[old_count]:
+                active_counts.discard(old_count)
+
+        new_count = old_count + delta
+        if new_count > 0:
+            pair_counts[pair] = new_count
+            count_buckets[new_count].add(pair)
+            if new_count not in active_counts:
+                active_counts.add(new_count)
+                heapq.heappush(count_heap, -new_count)
+        else:
+            pair_counts.pop(pair, None)
+
+    def word_pair_counts(word: tuple[bytes, ...]) -> Counter[tuple[bytes, bytes]]:
+        return Counter(zip(word, word[1:]))
+
+    def add_word(word: tuple[bytes, ...], freq: int) -> None:
+        """Add a word type to pair counts and the reverse occurrence index."""
+        for pair, occurrences in word_pair_counts(word).items():
+            update_pair_count(pair, freq * occurrences)
+            pair_to_words[pair].add(word)
+
+    def remove_word(word: tuple[bytes, ...], freq: int) -> None:
+        """Remove a word type from pair counts and the reverse occurrence index."""
+        for pair, occurrences in word_pair_counts(word).items():
+            update_pair_count(pair, -freq * occurrences)
+            words = pair_to_words[pair]
+            words.discard(word)
+            if not words:
+                del pair_to_words[pair]
+
     for word, freq in word_counts.items():
-        add_pair_counts(word, pair_counts, freq)
+        add_word(word, freq)
 
     for _ in range(num_merges):
-        if not pair_counts:
+        while count_heap and -count_heap[0] not in active_counts:
+            heapq.heappop(count_heap)
+        if not count_heap:
             # Corpus is fully merged (every pre-token is a single symbol); stop early.
             print(f"train_bpe: no pairs left to merge after {len(merges)} merges; stopping early.")
             break
-        # Prefer highest frequency; break ties by lexicographically largest pair (one pass).
-        best_pair = max(pair_counts, key=lambda p: (pair_counts[p], p))
+
+        best_count = -count_heap[0]
+        # The heap selects the highest count; the set handles the required
+        # lexicographically greatest tie-break exactly.
+        best_pair = max(count_buckets[best_count])
         merges.append(best_pair)
-        merge_count_history.append(pair_counts[best_pair])
+        merge_count_history.append(best_count)
 
         merged = best_pair[0] + best_pair[1]
         vocab[len(vocab)] = merged
 
-        affected_words = []
-        for word, freq in word_counts.items():
-            if contain_pair(word, best_pair):
-                affected_words.append((word, freq))
+        # Snapshot the set because removing and re-adding words mutates the index.
+        affected_words = list(pair_to_words[best_pair])
 
-        for word, freq in affected_words:
-            # remove best_pair from word
-            add_pair_counts(word, pair_counts, -freq)
+        for word in affected_words:
+            freq = word_counts.pop(word)
+            remove_word(word, freq)
             new_word = merge_pair(word, best_pair)
-            # add new pair counts
-            add_pair_counts(new_word, pair_counts, freq)
-
-            # update word counts
             word_counts[new_word] = word_counts.get(new_word, 0) + freq
-            del word_counts[word]
-
-        # remove 0 count pairs
-        pair_counts = {p: c for p, c in pair_counts.items() if c > 0}
+            add_word(new_word, freq)
 
     if return_history:
         return vocab, merges, merge_count_history
@@ -176,6 +214,8 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str], retur
 
 
 class Tokenizer:
+    """Encode and decode text using a byte-level vocabulary and BPE merge rules."""
+
     def __init__(
         self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None
     ):
@@ -183,14 +223,16 @@ class Tokenizer:
         self.merges = merges
         self.special_tokens = special_tokens or []
 
+        # Keep both directions because encoding starts from bytes while
+        # decoding starts from integer token IDs.
         self.id_to_bytes = {k: v for k, v in vocab.items()}
         self.bytes_to_id = {v: k for k, v in vocab.items()}
 
-        # byte value -> token id
+        # Every raw byte must exist in a byte-level vocabulary.
         self.byte_to_id = [self.bytes_to_id[bytes([i])] for i in range(256)]
 
         self.special_to_id = {}
-        # add special tokens to vocab
+        # Special tokens are atomic tokens and must bypass normal BPE merging.
         for tok in self.special_tokens:
             tok_bytes = tok.encode("utf-8")
             if tok_bytes not in self.bytes_to_id:
@@ -201,13 +243,16 @@ class Tokenizer:
             self.special_to_id[tok] = self.bytes_to_id[tok_bytes]
 
         if self.special_tokens:
+            # Capture the token as a group so split() keeps the special token
+            # in the returned list instead of discarding it.
             pattern = "|".join(re.escape(t) for t in sorted(self.special_tokens, key=len, reverse=True))
             self.special_splitter = re.compile(f"({pattern})")
         else:
             self.special_splitter = None
 
-        # 构建 BPE 合并信息 (id pair -> (merged_id, rank))
-        #   rank = 合并在 merges 列表中的位置（越小越先合并）
+        # Convert byte-level merge rules to integer IDs once at initialization.
+        # Mapping: (left_id, right_id) -> (merged_id, rank), where a lower rank
+        # means that the pair must be merged earlier.
         self.merge_info: dict[tuple[int, int], tuple[int, int]] = {}
         for rank, (b1, b2) in enumerate(merges):
             id1 = self.bytes_to_id[b1]
@@ -216,8 +261,14 @@ class Tokenizer:
             merged_id = self.bytes_to_id[merged_bs]
             self.merge_info[(id1, id2)] = (merged_id, rank)
 
+        # Pretokenization repeats many common words.  Cache the final BPE result
+        # to avoid rebuilding the merge structure for every occurrence.
+        self.pretoken_cache: dict[bytes, tuple[int, ...]] = {}
+        self.cache_capacity = 100_000
+
     @classmethod
     def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None):
+        """Load a JSON vocabulary and a two-column merge file from disk."""
         with open(vocab_filepath, encoding="utf-8") as f:
             vocab_json = json.load(f)
         vocab = {int(k): v.encode("utf-8") for k, v in vocab_json.items()}
@@ -234,30 +285,97 @@ class Tokenizer:
         return cls(vocab, merges, special_tokens)
 
     def _bpe_encode_pretoken(self, pre_token: bytes) -> list[int]:
-        parts = [self.byte_to_id[b] for b in pre_token]
+        """Apply BPE to one regex pre-token represented as UTF-8 bytes.
 
-        while True:
-            best_rank = len(self.merges)
-            best_idx = -1
+        The heap always exposes the lowest-rank currently known pair.  The
+        linked-list arrays make a merge local: only the pairs touching the new
+        merged token need to be added back to the heap.
+        """
+        cached = self.pretoken_cache.get(pre_token)
+        if cached is not None:
+            # Dicts preserve insertion order; moving a hit to the end gives us
+            # a small LRU cache when the capacity limit is reached.
+            self.pretoken_cache.pop(pre_token)
+            self.pretoken_cache[pre_token] = cached
+            return list(cached)
 
-            for i in range(len(parts) - 1):
-                info = self.merge_info.get((parts[i], parts[i + 1]), None)
+        if not pre_token:
+            return []
+
+        # Start with one token for each byte.  A one-byte pre-token is already
+        # maximally merged and is also a useful edge case to handle explicitly.
+        token_ids = [self.byte_to_id[b] for b in pre_token]
+        if len(token_ids) == 1:
+            result = tuple(token_ids)
+        else:
+            # Store token IDs as a doubly linked list using array indices.  A
+            # removed node remains in the arrays but is marked dead, which lets
+            # us invalidate old heap entries without searching the heap.
+            prev = [-1] + list(range(len(token_ids) - 1))
+            next_ = list(range(1, len(token_ids))) + [-1]
+            alive = [True] * len(token_ids)
+            heap: list[tuple[int, int, int, int]] = []
+
+            def add_pair(left: int) -> None:
+                """Push a merge candidate for the adjacent live nodes."""
+                right = next_[left]
+                if right == -1:
+                    return
+                info = self.merge_info.get((token_ids[left], token_ids[right]))
                 if info is not None:
-                    rank = info[1]
-                    if rank < best_rank:
-                        best_rank = rank
-                        best_idx = i
+                    _, rank = info
+                    heapq.heappush(heap, (rank, left, token_ids[left], token_ids[right]))
 
-            if best_idx == -1:
-                break
+            for index in range(len(token_ids) - 1):
+                add_pair(index)
 
-            merged_id = self.merge_info[(parts[best_idx], parts[best_idx + 1])][0]
-            parts[best_idx] = merged_id
-            del parts[best_idx + 1]
+            while heap:
+                rank, left, left_id, right_id = heapq.heappop(heap)
+                right = next_[left]
+                # Candidates become stale after neighboring merges.  Validate
+                # both IDs and the current rank before applying the candidate.
+                if (
+                    not alive[left]
+                    or right == -1
+                    or not alive[right]
+                    or token_ids[left] != left_id
+                    or token_ids[right] != right_id
+                    or self.merge_info.get((left_id, right_id), (None, None))[1] != rank
+                ):
+                    continue
 
-        return parts
+                merged_id = self.merge_info[(left_id, right_id)][0]
+                # Merge right into left, then reconnect left to the old right
+                # neighbor.  The merge rank determines the exact BPE order.
+                token_ids[left] = merged_id
+                alive[right] = False
+                next_[left] = next_[right]
+                if next_[left] != -1:
+                    prev[next_[left]] = left
+
+                previous = prev[left]
+                if previous != -1:
+                    add_pair(previous)
+                add_pair(left)
+
+            # Walk from the head of the linked list and skip dead nodes.
+            result_ids = []
+            index = 0
+            while index != -1:
+                if alive[index]:
+                    result_ids.append(token_ids[index])
+                index = next_[index]
+            result = tuple(result_ids)
+
+        if self.cache_capacity > 0:
+            # Evict the least-recently-used entry before inserting a new one.
+            if len(self.pretoken_cache) >= self.cache_capacity:
+                self.pretoken_cache.pop(next(iter(self.pretoken_cache)))
+            self.pretoken_cache[pre_token] = result
+        return list(result)
 
     def _encode_plain_text(self, text: str) -> list[int]:
+        """Encode text that contains no special-token matches."""
         token_ids = []
         for match in GPT2_SPLIT_PATTERN_RE.finditer(text):
             pre_token = match.group().encode("utf-8")
@@ -265,9 +383,12 @@ class Tokenizer:
         return token_ids
 
     def encode(self, text: str) -> list[int]:
+        """Encode text, preserving configured special tokens as atomic IDs."""
         if not self.special_tokens:
             return self._encode_plain_text(text)
 
+        # The capturing group in special_splitter keeps special-token pieces in
+        # `parts`; ordinary pieces continue through normal GPT-2 pre-tokenization.
         parts = self.special_splitter.split(text)
         result = []
         for part in parts:
@@ -278,10 +399,12 @@ class Tokenizer:
         return result
 
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
+        """Lazily encode each string from an iterable without joining the input."""
         for text in iterable:
             yield from self.encode(text)
 
     def decode(self, ids: list[int]) -> str:
+        """Concatenate token bytes and decode them as UTF-8."""
         all_bytes = b"".join(self.id_to_bytes[id] for id in ids)
         return all_bytes.decode("utf-8", errors="replace")
 

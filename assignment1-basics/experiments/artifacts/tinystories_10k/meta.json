@@ -1,0 +1,19 @@
+{
+  "dataset": "tinystories",
+  "corpus": "data/subsets/tinystories_50M.txt",
+  "corpus_chars": 50000000,
+  "vocab_size": 10000,
+  "actual_vocab_size": 10000,
+  "special_tokens": [
+    "<|endoftext|>",
+    "<|pad|>"
+  ],
+  "num_merges": 9742,
+  "train_seconds": 31.5,
+  "first_merge_count": 1425589,
+  "last_merge_count": 11,
+  "longest_token_id": 8755,
+  "longest_token_bytes": [32, 101, 110, 116, 104, 117, 115, 105, 97, 115, 116, 105, 99, 97, 108, 108, 121],
+  "longest_token_length": 17,
+  "longest_token_utf8": " enthusiastically"
+}
