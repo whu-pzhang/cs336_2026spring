@@ -1,6 +1,6 @@
 # CS336 作业进度
 
-最后更新：2026-08-26
+最后更新：2026-09-07
 
 实现写在各 `assignmentN-*/`，书面草稿在 `notes/assignmentN/writeup.md`。本文件只记进度，不记题解。
 
@@ -12,7 +12,7 @@
 书面：`notes/assignment1/writeup.md`  
 推导笔记：`notes/assignment1/notes.md`
 
-当前阶段：**核心实现测试通过（47 passed / 1 expected xfail）；Tokenizer、书面 accounting 和 2.7 实验已完成，仍需完成解码、端到端训练和第 7 节实验。**
+当前阶段：**核心实现与 TinyStories 主实验、生成样例、LR / batch sweep 已完成。下一步是架构消融、OWT 和 `writeup.pdf`。**
 
 ### 实现
 
@@ -21,8 +21,8 @@
 | BPE 训练 `train_bpe` | 完成 | `cs336_basics/tokenizer.py` |
 | `Tokenizer` encode / decode / iterable | 完成 | 同上 |
 | BPE 训练脚本与 artifact 导出 | 完成 | `experiments/train_tokenizers.py` |
-| tokenizer experiments | 完成（2.7(d) 需用新词表重编码） | `experiments/tokenizer_experiments.py` |
-| 并行数据集 tokenization | 脚本完成；现有 `.npy` 为旧词表 | `experiments/tokenize_datasets.py` |
+| tokenizer experiments | 完成 | `experiments/tokenizer_experiments.py` |
+| 并行数据集 tokenization | 完成；10K/32K 全量 train/valid `.npy` 已生成 | `experiments/tokenize_datasets.py` → `data/tokenized/` |
 | Linear / Embedding / RMSNorm / SwiGLU / RoPE | 完成 | `cs336_basics/llm.py` |
 | softmax / SDPA / MHA / TransformerBlock / LM | 完成 | 同上 |
 | SiLU | 完成 | `llm.silu` → `adapters.run_silu` |
@@ -50,28 +50,29 @@
 | learning_rate_tuning | 已写；脚本和 JSON 结果已生成 |
 | adamw_accounting | 已完成；显存、batch size、AdamW FLOPs、H100 训练时间已补齐 |
 | train_bpe_tinystories / train_bpe_expts_owt | 已写；当前基于 50M/5M 子集 |
-| tokenizer_experiments | 已写；2.7(d) 的新词表数组仍待重生成 |
-| 第 5–7 节训练 / 消融实验 | 未写 |
+| tokenizer_experiments | 已写；2.7(d) 已用 10K/32K 词表重编码 |
+| 第 5–7 节训练 / 消融实验 | TinyStories 主实验、LR / batch sweep、生成样例已记；消融 / OWT 未写 |
 
 ### 实验与交付
 
 - [x] 下载 TinyStories / OWT（2026-08-23 经 hf-mirror.com 下载）
 - [x] 在训练子集上训 10K/32K BPE，导出 vocab / merges（`experiments/artifacts/`）
-- [~] `tokenize_datasets.py` 支持 8 worker；已有 `uint16` `.npy` 仍由旧 32K 词表生成
+- [x] 用 TinyStories 10K / OWT 32K 词表重编码 train/valid（8 worker，`data/tokenized/`；meta 见 `data/tokenized/meta.json`）
 - [x] 完成 2.7 tokenizer experiment（压缩率、吞吐量、Pile 估算、histogram）
 - [x] `training_together` 训练循环（超参 CLI、memmap、验证、JSONL 指标、checkpoint、resume；CPU 冒烟通过）
-- [ ] 实现 decoder（temperature / top-p）并生成至少 256 token 文本
+- [x] 用 TinyStories checkpoint 生成至少 256 token 文本（`experiments/decoding.py`，temperature=0.9，top-p=0.9）
 - [x] AdamW accounting（显存、batch size、AdamW FLOPs、H100 训练时间）
-- [ ] 端到端训练 Transformer LM（CUDA，TinyStories 40k step）
-- [ ] 学习率 sweep、batch size 实验、架构消融、OWT 主实验、leaderboard
+- [x] 端到端训练 Transformer LM（CUDA，TinyStories 40k step；`experiments/artifacts/tinystories_lm/ckpt.pt`）
+- [x] TinyStories 学习率 sweep（`1e-4` / `3e-4` / `1e-3` / `3e-3`；1e-3 最好）
+- [x] TinyStories batch size sweep（16 / 32 / 64 / 128，对齐 token；32 与 128 接近，16 更差）
+- [ ] 架构消融、OWT 主实验、leaderboard
 - [ ] 实验记录、生成样例、`writeup.pdf`
 
 ### 建议下一步
 
-1. 用新 10K/32K artifact 重生成 TinyStories/OWT train/valid `.npy`
-2. 实现 decoder 并生成至少 256 token 的样例
-3. CUDA 上跑 TinyStories，完成 learning-rate / batch-size sweep 和验证曲线
-4. 完成架构消融、OWT 主实验、实验日志和最终 `writeup.pdf`
+1. 架构消融（需改模型后再训）
+2. OWT 主实验（`bash experiments/run_experiments.sh owt`）
+3. 实验日志和最终 `writeup.pdf`
 
 ---
 

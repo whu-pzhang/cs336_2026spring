@@ -58,6 +58,11 @@ def parse_args():
 
     parser.add_argument("--resume", action="store_true")
 
+    #
+    parser.add_argument(
+        "--ablation", type=str, default="baseline", choices=["baseline", "no_rms", "post_norm", "nope", "silu"]
+    )
+
     return parser.parse_args()
 
 
@@ -166,6 +171,22 @@ def main():
     log_path = args.log_path or checkpoint_path.with_suffix(".jsonl")
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # baseline (default)
+    ablation_kwargs = {
+        "use_rmsnorm": True,
+        "norm_type": "pre",
+        "use_rope": True,
+        "ffn_type": "swiglu",
+    }
+    if args.ablation == "no_rms":
+        ablation_kwargs["use_rmsnorm"] = False
+    elif args.ablation == "post_norm":
+        ablation_kwargs["norm_type"] = "post"
+    elif args.ablation == "nope":
+        ablation_kwargs["use_rope"] = False
+    elif args.ablation == "silu":
+        ablation_kwargs["ffn_type"] = "silu"
+
     model = TransformerLM(
         vocab_size=args.vocab_size,
         context_length=args.context_length,
@@ -174,6 +195,8 @@ def main():
         num_heads=args.num_heads,
         d_ff=args.d_ff,
         theta=args.theta,
+        #
+        **ablation_kwargs,
     )
     model.to(device)
 

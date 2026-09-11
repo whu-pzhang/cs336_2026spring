@@ -174,17 +174,22 @@ tokenizer 吞吐量约为 **3.04 MB/s**，预计需要 **75.33 小时（约 3.14
 该估算使用 `825,000,000,000 / throughput`，实际时间会随硬件、进程数和输入
 缓存情况变化。
 
-**(d)** `tokenize_datasets.py` 已实现按 special-token 边界分块，并用 8 个 worker
-通过两个 tokenizer 的 `encode_iterable` 生成 `uint16` 的 `.npy` token-ID 序列，
-供后续训练循环通过 memory map 加载。当前目录中的数组是此前 32,768 词表配置
-生成的；要严格使用本题要求的 TinyStories 10K / OWT 32K artifact，需要在
-`assignment1-basics` 目录运行下面的命令重新生成（不要使用
-`--skip-existing`）：
+**(d)** 已用 TinyStories 10K 和 OWT 32K tokenizer，按 special-token 边界分块、
+8 个 worker 并行编码各自的 train/valid 语料，输出 `uint16` `.npy`（可用
+`np.load(..., mmap_mode="r")` 加载）。产物在
+`assignment1-basics/data/tokenized/`，摘要在同目录 `meta.json`。
 
-```bash
-./.venv/bin/python experiments/tokenize_datasets.py \
-  --dataset both --split both --workers 8
-```
+| 文件                    |        tokens | max_id | bytes/token |   耗时 |       吞吐 |
+| ----------------------- | ------------: | -----: | ----------: | -----: | ---------: |
+| `tinystories_train.npy` |   540,980,844 |   9999 |       4.118 |  43.1s | 51.68 MB/s |
+| `tinystories_valid.npy` |     5,463,342 |   9999 |       4.119 |   0.4s | 55.42 MB/s |
+| `owt_train.npy`         | 2,793,355,176 |  31999 |       4.267 | 238.0s | 50.09 MB/s |
+| `owt_valid.npy`         |    68,041,541 |  31999 |       4.262 |   5.6s | 51.53 MB/s |
+
+`max_id` 分别落在 10K / 32K 词表范围内，确认使用的是本题要求的 artifact，
+而不是此前 32,768 词表。全量压缩率与 10 文档样本（TinyStories 4.044、OWT
+4.323 bytes/token）接近，说明样本估算没有系统性偏差。并行编码吞吐约
+50–55 MB/s，明显高于 (c) 中单进程小样本测得的 3–4 MB/s。
 
 ---
 
@@ -288,12 +293,12 @@ MHA 已包含 QKV/output 投影和两次 attention 矩阵乘。
 
 
 各模块占比如下：
-| Model       | Total FLOPs | MHA   | FFN   | lm_head |
-| ----------- | ----------- | ----- | ----- | ------- |
-| GPT2-small  | 291.6483    | 33.13% | 39.76% | 27.10% |
-| GPT2-medium | 830.1723    | 37.25% | 50.05% | 12.70% |
-| GPT2-large  | 1768.5309   | 38.25% | 54.30% | 7.45%  |
-| GPT2-XL     | 3516.7699   | 37.78% | 57.53% | 4.68%  |
+| Model       | Total FLOPs | MHA    | FFN    | lm_head |
+| ----------- | ----------- | ------ | ------ | ------- |
+| GPT2-small  | 291.6483    | 33.13% | 39.76% | 27.10%  |
+| GPT2-medium | 830.1723    | 37.25% | 50.05% | 12.70%  |
+| GPT2-large  | 1768.5309   | 38.25% | 54.30% | 7.45%   |
+| GPT2-XL     | 3516.7699   | 37.78% | 57.53% | 4.68%   |
 
 
 随着模型参数增加，不同模块FLOPs趋势如下：
@@ -308,12 +313,12 @@ MHA 已包含 QKV/output 投影和两次 attention 矩阵乘。
 和 lm head FLOPs 都乘以 16，而 `QKᵀ` 与 attention 加权求和乘以 `16²=256`。
 具体结果如下：
 
-| Component | FLOPs at `T=16,384` | Share |
-|---|---:|---:|
-| MHA | 98.5695 TFLOPs | 73.79% |
-| FFN | 32.3733 TFLOPs | 24.24% |
-| lm_head | 2.6349 TFLOPs | 1.97% |
-| Total | 133.5777 TFLOPs | 100% |
+| Component | FLOPs at `T=16,384` |  Share |
+| --------- | ------------------: | -----: |
+| MHA       |      98.5695 TFLOPs | 73.79% |
+| FFN       |      32.3733 TFLOPs | 24.24% |
+| lm_head   |       2.6349 TFLOPs |  1.97% |
+| Total     |     133.5777 TFLOPs |   100% |
 
 因此长上下文下 attention 的二次复杂度成为主要成本；FFN 和 lm head 虽然也增加
 16 倍，但在总 FLOPs 中的比例明显下降。
@@ -336,12 +341,12 @@ training iterations. Compare the loss behavior with the baseline learning rate
 种子 `0`、相同初始权重和 10 次更新；完整 loss 序列保存于
 `assignment1-basics/experiments/artifacts/learning_rate_tuning.json`。
 
-| learning rate | iteration 1 loss | iteration 10 loss | 行为 |
-|---:|---:|---:|---|
-| `1` | 26.2714 | 21.7399 | 缓慢下降 |
-| `10` | 26.2714 | 3.53075 | 快速下降 |
-| `100` | 26.2714 | 2.3499×10⁻²³ | 先振荡后快速下降 |
-| `1000` | 26.2714 | 2.43501×10¹⁸ | 发散 |
+| learning rate | iteration 1 loss | iteration 10 loss | 行为             |
+| ------------: | ---------------: | ----------------: | ---------------- |
+|           `1` |          26.2714 |           21.7399 | 缓慢下降         |
+|          `10` |          26.2714 |           3.53075 | 快速下降         |
+|         `100` |          26.2714 |      2.3499×10⁻²³ | 先振荡后快速下降 |
+|        `1000` |          26.2714 |      2.43501×10¹⁸ | 发散             |
 
 增大学习率在稳定范围内可以加快收敛，但超过稳定范围后会导致更新过大、loss
 迅速增长。
@@ -444,3 +449,139 @@ $$
 H100 在 50% MFU 下的有效吞吐量为 `0.5 × 495 TFLOPs/s = 247.5 TFLOPs/s`，
 所以预计训练时间为约 **4,850 小时（约 202 天）**。该估算只计算模型前向和反向，
 没有额外计入数据读取、评估、checkpoint 和 AdamW 更新的开销。
+
+---
+
+## 5 Training a Transformer LM（实验记录草稿）
+
+### TinyStories 主实验（40k step）
+
+2026-09-07，RTX 5090 D，float32，`experiments/train.py`。数据为 TinyStories 10K
+tokenizer 编码的 `data/tokenized/tinystories_{train,valid}.npy`。Checkpoint 与
+日志：`experiments/artifacts/tinystories_lm/ckpt.pt`、`ckpt.jsonl`。
+
+| 超参           | 值                            |
+| -------------- | ----------------------------- |
+| vocab_size     | 10000                         |
+| context_length | 256                           |
+| d_model        | 512                           |
+| num_layers     | 4                             |
+| num_heads      | 16                            |
+| d_ff           | 1344                          |
+| batch_size     | 32                            |
+| total_iters    | 40000                         |
+| warmup_iters   | 400                           |
+| lr max / min   | 1e-3 / 1e-4                   |
+| AdamW β        | (0.9, 0.95)，wd 0.1，clip 1.0 |
+
+每步 token 数 `32 × 256 = 8192`，40k 步共约 **3.28×10⁸** token（约 0.61 epoch）。
+墙钟 **1872 s（约 31.2 min）**，约 21.4 step/s。
+
+|  step | train_loss | valid_loss |
+| ----: | ---------: | ---------: |
+|  1000 |      2.237 |      2.272 |
+|  5000 |      1.754 |      1.767 |
+| 10000 |      1.621 |      1.634 |
+| 20000 |      1.451 |      1.536 |
+| 30000 |      1.501 |      1.446 |
+| 39000 |      1.387 |      1.356 |
+| 40000 |      1.332 |      1.398 |
+
+train 与 valid 全程接近，没有明显过拟合。最终 valid ≈ 1.40（约 perplexity 4.0）；
+记录到的最好 valid 在 39k，为 1.356。1k 之后的 valid 抖动来自 `eval_iters=20` 的
+估计方差，不代表崩溃。
+
+### 学习率 sweep
+
+固定 TinyStories 数据与模型、batch 32、40k step、warmup 400，只改 peak LR
+（`lr_min = 0.1 × lr_max`）。日志在 `experiments/artifacts/sweeps/lr_*/ckpt.jsonl`。
+`1e-3` 与主实验 `tinystories_lm` 的指标一致。
+
+valid_loss（`eval_iters=20`）：
+
+|  step | `1e-4` | `3e-4` |    `1e-3` | `3e-3` |
+| ----: | -----: | -----: | --------: | -----: |
+|  1000 |  3.017 |  2.572 | **2.272** |  2.323 |
+|  5000 |  2.216 |  1.860 | **1.767** |  1.822 |
+| 10000 |  1.919 |  1.684 | **1.634** |  1.713 |
+| 20000 |  1.750 |  1.567 | **1.536** |  1.615 |
+| 30000 |  1.693 |  1.503 | **1.446** |  1.493 |
+| 39000 |  1.619 |  1.431 | **1.356** |  1.373 |
+| 40000 |  1.664 |  1.470 | **1.398** |  1.412 |
+
+四条都收敛，没有发散。`1e-4` 全程落后，40k 时仍比基线差约 0.27。`3e-4` 介于中间。
+`3e-3` 没有炸，但早期和最终都略差于 `1e-3`（1k 时 2.32 vs 2.27）。对本配置，
+**peak LR = 1e-3** 最好；再大没有更快，再小则欠拟合。
+
+### batch size sweep
+
+PDF 未规定是否对齐 token。本实验固定总 token 为基线的 `32 × 256 × 40000 = 3.28×10⁸`，
+反推步数，warmup 保持总步数的 1%，LR 仍为 `1e-3`。batch=32 即主实验。
+
+| batch | steps | warmup |   墙钟 | 最终 valid |
+| ----: | ----: | -----: | -----: | ---------: |
+|    16 | 80000 |    800 | 1876 s |      1.451 |
+|    32 | 40000 |    400 | 1872 s |  **1.398** |
+|    64 | 20000 |    200 | 1861 s |      1.423 |
+|   128 | 10000 |    100 | 1911 s |      1.393 |
+
+按相同 token 进度对齐后的 valid_loss：
+
+| token 进度 |    16 |    32 |    64 |              128 |
+| ---------- | ----: | ----: | ----: | ---------------: |
+| 10%        | 1.844 | 1.803 | 1.788 |            1.888 |
+| 25%        | 1.752 | 1.634 | 1.619 | ~1.60（3k step） |
+| 50%        | 1.619 | 1.536 | 1.543 |            1.497 |
+| 75%        | 1.493 | 1.446 | 1.451 | ~1.39（8k step） |
+| 100%       | 1.451 | 1.398 | 1.423 |            1.393 |
+
+token 对齐后墙钟几乎一样（约 31 min）：5090 上瓶颈是算力，步数翻倍、batch 减半，总 FLOPs 不变。
+最终 **16 明显更差**（梯度噪声大）；32 / 64 / 128 收在 1.39–1.42，没有从 32 再加大的稳定收益。
+未做 linear LR scaling。后续主实验保持 batch 32。
+
+### 生成样例与 temperature 对比
+
+`experiments/decoding.py` 从 `tinystories_lm/ckpt.pt` 加载与训练相同的架构
+（vocab 10000，context 256，d_model 512，4 层，16 heads，d_ff 1344）。采样为
+temperature + nucleus（`top_p=0.9`）。TinyStories 故事偏短，为凑满作业要求的
+256 token，生成时不在 `<|endoftext|>` 处停止。对照实验固定 prompt
+`Once upon a time`（4 token）、`max_length=256`，只改 temperature。
+
+**主样例（temperature=0.9，新生成 256 token）：**
+
+```text
+Once upon a time, in a small town, there was a big show. All the people in the town wanted to perform in a row. They were all excited. The sun was shining, and everyone was happy.
+In the show, there was a big, scary monster. The monster was mean and scary. Everyone was afraid of the monster. They all ran away. But then, a small cat had a plan. The cat would only watch and not see the monster coming.
+The people in the town were scared of the monster. They did not know what to do. Then, something unexpected happened. A big, friendly dog came to the monster. The dog barked and showed everyone the monster. The people were surprised! They did not know the monster could talk. The monster wanted to be friends too. So, the monster went away, and everyone was happy. They learned that sometimes, a little help can make a big change. And they all lived happily ever after.
+<|endoftext|>
+Once upon a time, there was a little girl named Mia. She had a small garden where she grew pretty flowers. One day, she saw a new flower in her garden. It was red and smelled very nice. Mia thought the new flower was attractive, so she wanted to show it
+```
+
+第一篇能收束，用词符合 TinyStories，但因果已经偏松（猫的计划没有下文；怪物突然会说话）。
+
+| temperature | 第一篇                                          | 观感                             |
+| ----------: | ----------------------------------------------- | -------------------------------- |
+|         0.3 | 完整：公园、玩具车、听妈妈话，然后另起 Tim 的车 | 最稳，句式短、角色和道具高度重复 |
+|         0.9 | 完整：小镇表演 / 怪物 / 狗，带说教结尾          | 更有情节，仍可读                 |
+|         1.2 | 勉强收束（羊 Fluffy），EOS 后崩溃               | 角色名乱跳，出现破词             |
+
+**temperature=0.3 摘录：** 分布被压尖，走高频儿童故事模板。
+
+```text
+Once upon a time, there was a little girl named Lily. She had a big, red ball that she loved to play with. One day, she went to the park with her mom and dad.
+At the park, Lily saw a boy named Tim. Tim was playing with a toy car. Lily wanted to play with the car too. She walked up to Tim and said, "Can I play with your car?" Tim said, "Yes, you can play with my car."
+Lily and Tim played with the car together. They had a lot of fun. But then, Lily's mom called her. She said, "Lily, it's time to go home." Lily did not want to leave the car, but she knew she had to listen to her mom. So, she said goodbye to Tim and went home.
+```
+
+**temperature=1.2 摘录：** 第一篇还能像故事，跨过 EOS 后长尾 token 进入采样。
+
+```text
+Once upon a time, there was a lonely sheep named Fluffy. Fluffy had no friends to play with. One day, Fluffy felt sad.
+A little boy named Tommy saw the hats Sam helped with. Tommy asked, "Can I wear the hats with your power, please?" Fluffy said, "Yes, you can have one. Let's be friends!"
+...
+And that is how Fluffy learned to friendship and comfort carry people.
+<|endoftext|>
+Sam loves hits hairy!" He chasing the pulls of shots for fun. ... Sam puts down theing soldiers and runs to the Dodo peiding. ... HeAre heam also Spot?
+```
+
+对本模型，书面结论取 **0.7–1.0**：0.3 偏复读，1.2 过高。作业要求的 ≥256 token 样例已由 0.9 那次满足。

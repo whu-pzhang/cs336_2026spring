@@ -59,7 +59,24 @@ def silu(x: torch.Tensor) -> torch.Tensor:
     return x * torch.sigmoid(x)
 
 
-class SwiGLU(nn.Module):
+class SiluFFN(nn.Module):
+    def __init__(self, d_model: int, d_ff: int, device=None, dtype=None) -> None:
+        super().__init__()
+        self.d_model = d_model
+        self.d_ff = d_ff
+        self.device = device
+        self.dtype = dtype
+
+        self.w1 = Linear(d_model, d_ff)
+        self.w2 = Linear(d_ff, d_model)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x1 = self.w1(x)
+        result = self.w2(silu(x1))
+        return result
+
+
+class SwiGLUFFN(nn.Module):
     def __init__(self, d_model: int, d_ff: int, device=None, dtype=None) -> None:
         super().__init__()
         self.d_model = d_model
@@ -169,17 +186,49 @@ class MultiHeadAttention(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, d_model: int, num_heads: int, d_ff: int, theta: float = None, max_seq_len: int = None) -> None:
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        theta: float = None,
+        max_seq_len: int = None,
+        # for ablation study
+        use_rmsnorm: bool = True,
+        use_rope: bool = True,
+        norm_type: str = "pre",
+        ffn_type: str = "swiglu",
+    ) -> None:
         super().__init__()
-        self.ln1 = RMSNorm(d_model)
-        self.attn = MultiHeadAttention(d_model, num_heads, theta, max_seq_len)
-        self.ln2 = RMSNorm(d_model)
-        self.ffn = SwiGLU(d_model, d_ff)
+        assert ffn_type in ["swiglu", "silu"]
+        assert norm_type in ["pre", "post"]
+        self.norm_type = norm_type
+
+        if use_rmsnorm:
+            self.ln1 = RMSNorm(d_model)
+            self.ln2 = RMSNorm(d_model)
+        else:
+            self.ln1 = nn.Identity()
+            self.ln2 = nn.Identity()
+
+        if use_rope:
+            self.attn = MultiHeadAttention(d_model, num_heads, theta, max_seq_len)
+        else:
+            self.attn = MultiHeadAttention(d_model, num_heads, theta=None, max_seq_len=None)
+
+        if ffn_type == "swiglu":
+            self.ffn = SwiGLUFFN(d_model, d_ff)
+        else:  # ffn_type == "silu":
+            self.ffn = SiluFFN(d_model, d_ff)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         token_positions = torch.arange(x.size(-2))
-        x = x + self.attn(self.ln1(x), token_positions)
-        x = x + self.ffn(self.ln2(x))
+        if self.norm_type == "pre":
+            x = x + self.attn(self.ln1(x), token_positions)
+            x = x + self.ffn(self.ln2(x))
+        else:
+            x = self.ln1(x + self.attn(x, token_positions))
+            x = self.ln2(x + self.ffn(x))
         return x
 
 
@@ -193,6 +242,11 @@ class TransformerLM(nn.Module):
         num_heads: int,
         d_ff: int,
         theta: float = None,
+        # for ablation study
+        use_rmsnorm: bool = True,
+        norm_type: str = "pre",  # or "post"
+        use_rope: bool = True,
+        ffn_type: str = "swiglu",  # or "silu"
     ) -> None:
         super().__init__()
         self.vocab_size = vocab_size
@@ -201,12 +255,29 @@ class TransformerLM(nn.Module):
 
         self.token_embeddings = Embedding(vocab_size, d_model)
 
+        if ffn_type == "silu":
+            d_ff = 4 * d_model
+
         self.layers = nn.ModuleList()
         for _ in range(num_layers):
-            block = TransformerBlock(d_model, num_heads, d_ff, theta, max_seq_len=context_length)
+            block = TransformerBlock(
+                d_model,
+                num_heads,
+                d_ff,
+                theta,
+                max_seq_len=context_length,
+                #
+                use_rmsnorm=use_rmsnorm,
+                use_rope=use_rope,
+                norm_type=norm_type,
+                ffn_type=ffn_type,
+            )
             self.layers.append(block)
 
-        self.ln_final = RMSNorm(d_model)
+        if use_rmsnorm:
+            self.ln_final = RMSNorm(d_model)
+        else:
+            self.ln_final = nn.Identity()
         self.lm_head = Linear(d_model, vocab_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

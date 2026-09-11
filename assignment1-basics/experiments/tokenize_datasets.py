@@ -41,7 +41,7 @@ TARGET_CHUNK_BYTES = 128 * 1024 * 1024
 
 JOBS = {
     "tinystories": {
-        "tokenizer": "tinystories_10k",
+        "artifact_dir": ARTIFACTS_DIR / "tinystories_10k",
         "special_tokens": ["<|endoftext|>", "<|pad|>"],
         "splits": {
             "train": DATA_DIR / "TinyStoriesV2-GPT4-train.txt",
@@ -49,7 +49,7 @@ JOBS = {
         },
     },
     "owt": {
-        "tokenizer": "owt_32k",
+        "artifact_dir": ARTIFACTS_DIR / "owt_32k",
         "special_tokens": ["<|endoftext|>"],
         "splits": {
             "train": DATA_DIR / "owt_train.txt",
@@ -68,15 +68,16 @@ def load_tokenizer_artifacts(out_dir: Path) -> tuple[dict[int, bytes], list[tupl
     return vocab, merges
 
 
-def load_tokenizer(name: str) -> Tokenizer:
-    vocab, merges = load_tokenizer_artifacts(ARTIFACTS_DIR / name)
-    return Tokenizer(vocab, merges, special_tokens=JOBS[name]["special_tokens"])
+def load_tokenizer(dataset: str) -> Tokenizer:
+    job = JOBS[dataset]
+    vocab, merges = load_tokenizer_artifacts(job["artifact_dir"])
+    return Tokenizer(vocab, merges, special_tokens=job["special_tokens"])
 
 
 def _encode_chunk(task: tuple[int, str, str, int, int, str]) -> dict:
     """Encode one byte-range and write bounded-size token chunks to disk."""
-    chunk_index, src_name, temp_dir, start, end, tokenizer_name = task
-    tokenizer = load_tokenizer(tokenizer_name)
+    chunk_index, src_name, temp_dir, start, end, dataset = task
+    tokenizer = load_tokenizer(dataset)
     src = Path(src_name)
     temp_path = Path(temp_dir)
 
@@ -126,26 +127,14 @@ def _encode_chunk(task: tuple[int, str, str, int, int, str]) -> dict:
     }
 
 
-def encode_to_npy(
-    tokenizer: Tokenizer,
-    src: Path,
-    dst: Path,
-    workers: int = 1,
-    tokenizer_name: str | None = None,
-) -> dict:
+def encode_to_npy(dataset: str, src: Path, dst: Path, workers: int = 1) -> dict:
     """Encode a corpus in parallel and assemble it directly into an `.npy` memmap."""
     n_bytes = src.stat().st_size
     dst.parent.mkdir(parents=True, exist_ok=True)
     workers = max(1, workers)
-    special_tokens = tokenizer.special_tokens
+    special_tokens = JOBS[dataset]["special_tokens"]
     if not special_tokens:
         raise ValueError("parallel dataset encoding requires at least one special token")
-
-    if tokenizer_name is None:
-        matches = [name for name, config in JOBS.items() if config["special_tokens"] == special_tokens]
-        if len(matches) != 1:
-            raise ValueError("tokenizer_name is required when special tokens do not identify the tokenizer")
-        tokenizer_name = JOBS[matches[0]]["tokenizer"]
 
     # Use the longest configured special token as the document boundary.  The
     # worker chunks therefore never split an atomic special token.
@@ -157,7 +146,7 @@ def encode_to_npy(
     t0 = time.time()
     with tempfile.TemporaryDirectory(prefix=f".{dst.stem}.chunks.", dir=dst.parent) as temp_dir:
         tasks = [
-            (i, str(src), temp_dir, start, end, tokenizer_name)
+            (i, str(src), temp_dir, start, end, dataset)
             for i, (start, end) in enumerate(zip(boundaries[:-1], boundaries[1:]))
             if end > start
         ]
@@ -233,7 +222,6 @@ def main():
     names = list(JOBS) if args.dataset == "both" else [args.dataset]
     splits = ["train", "valid"] if args.split == "both" else [args.split]
 
-    tokenizers: dict[str, Tokenizer] = {}
     all_meta: dict[str, dict] = {}
     meta_path = OUT_DIR / "meta.json"
     if meta_path.exists():
@@ -242,11 +230,7 @@ def main():
 
     for name in names:
         job = JOBS[name]
-        tok_name = job["tokenizer"]
-        if tok_name not in tokenizers:
-            print(f"loading tokenizer: {tok_name}")
-            tokenizers[tok_name] = load_tokenizer(tok_name)
-
+        print(f"using tokenizer: {job['artifact_dir']}")
         for split in splits:
             src = job["splits"][split]
             dst = OUT_DIR / f"{name}_{split}.npy"
@@ -257,7 +241,7 @@ def main():
                 continue
             print(f"\n=== {key} ===")
             print(f"src: {src} ({src.stat().st_size / 1e9:.2f} GB)")
-            all_meta[key] = encode_to_npy(tokenizers[tok_name], src, dst, workers=args.workers, tokenizer_name=tok_name)
+            all_meta[key] = encode_to_npy(name, src, dst, workers=args.workers)
             with open(meta_path, "w", encoding="utf-8") as f:
                 json.dump(all_meta, f, indent=2)
 

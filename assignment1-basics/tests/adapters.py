@@ -15,7 +15,7 @@ from cs336_basics.llm import (
     MultiHeadAttention,
     RMSNorm,
     RotaryPositionalEmbedding,
-    SwiGLU,
+    SwiGLUFFN,
     TransformerBlock,
     TransformerLM,
     cross_entropy,
@@ -110,7 +110,7 @@ def run_swiglu(
     # swiglu.w3.weight.data = w3_weight
     device = w1_weight.device
     dtype = w1_weight.dtype
-    swiglu = SwiGLU(d_model, d_ff, device=device, dtype=dtype)
+    swiglu = SwiGLUFFN(d_model, d_ff, device=device, dtype=dtype)
     swiglu.load_state_dict({"w1.weight": w1_weight, "w2.weight": w2_weight, "w3.weight": w3_weight})
     result = swiglu(in_features)
     return result
