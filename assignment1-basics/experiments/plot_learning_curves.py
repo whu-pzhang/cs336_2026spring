@@ -125,6 +125,8 @@ def main() -> None:
         ("3e-4", load_jsonl(ARTIFACTS / "sweeps" / "lr_3e-4" / "ckpt.jsonl"), "C2"),
         ("1e-3", ts, "C0"),
         ("3e-3", load_jsonl(ARTIFACTS / "sweeps" / "lr_3e-3" / "ckpt.jsonl"), "C1"),
+        ("1e-2", load_jsonl(ARTIFACTS / "sweeps" / "lr_1e-2" / "ckpt.jsonl"), "C4"),
+        ("1e-1", load_jsonl(ARTIFACTS / "sweeps" / "lr_1e-1" / "ckpt.jsonl"), "C5"),
     ]
     batch_runs = [
         ("16", load_jsonl(ARTIFACTS / "sweeps" / "batch_16" / "ckpt.jsonl"), "C3"),

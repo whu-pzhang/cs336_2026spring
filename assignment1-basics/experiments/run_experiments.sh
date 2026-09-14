@@ -41,8 +41,8 @@ run_train() {
 
 run_lr() {
   # Pairs: peak LR, min LR (0.1x). 1e-3 is a fresh copy of the baseline dir layout.
-  local peaks=(1e-4 3e-4 1e-3 3e-3)
-  local mins=(1e-5 3e-5 1e-4 3e-4)
+  local peaks=(1e-4 3e-4 1e-3 3e-3 1e-1)
+  local mins=(1e-5 3e-5 1e-4 3e-4 1e-2)
   local i
   for i in "${!peaks[@]}"; do
     local lr="${peaks[$i]}"

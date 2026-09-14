@@ -69,10 +69,10 @@ Deliverable: An example, with a one-sentence explanation.
 
 #### 回答
 
-**(a)** UTF-8 对 ASCII 字符只需 1 个字节，而 UTF-16 和 UTF-32 通常分别需要
-2 和 4 个字节；例如 `"hello! こんにちは!"` 的编码长度分别是 UTF-8 **23**、
-UTF-16-LE **26**、UTF-32-LE **52** bytes（不计 BOM）。UTF-8 还是互联网的主流编码，并且只需固定的
-256 个单字节基本符号即可覆盖所有 Unicode 输入。
+**(a)** UTF-8 对 ASCII 字符只需 1 个字节，UTF-16 和 UTF-32 通常分别要 2 和 4
+个字节。例如 `"hello! こんにちは!"` 的编码长度分别是 UTF-8 **23**、UTF-16-LE
+**26**、UTF-32-LE **52** bytes（不计 BOM）。UTF-8 也是网上最常见的编码，用固定
+256 个单字节符号就能覆盖全部 Unicode 输入。
 
 **(b)** 示例输入：`"牛".encode("utf-8")`（即 `b'\xe7\x89\x9b'`）；该函数把一个
 多字节 UTF-8 序列拆成三个单字节分别解码，首字节和续字节都不是独立的合法字符，
@@ -111,26 +111,23 @@ and OpenWebText.
 `assignment1-basics/experiments/artifacts/owt_32k/`。
 
 **TinyStories (a)** 使用 10,000 词表（包含 `<|endoftext|>`，以及数据管线使用的
-`<|pad|>`）训练耗时约 **31.5 秒**；最长 token 是长度 **17** 的
-`" enthusiastically"`，是一个带前导空格的完整英文单词，符合 TinyStories
-中高频、简单英文叙事文本的分布。训练过程没有单独采集峰值 RSS，但远低于题目
-要求的 30GB 内存上限。
+`<|pad|>`）训练耗时约 **31.5 秒**。最长 token 是长度 **17** 的
+`" enthusiastically"`，带前导空格的完整英文单词，TinyStories 里这种叙事词很常见。
+训练时没有单独记峰值 RSS，但远低于题目的 30GB 上限。
 
-**TinyStories (b)** 优化后的训练流程中，预分词只需遍历语料一次；主要耗时来自
-BPE merge 循环中维护 pair 频数、反向索引并不断更新受影响的 pre-token。使用
-`pair_to_words` 和最大频数堆后，每轮只处理包含当前 pair 的词，避免重新扫描整个
-词表，因而显著降低了训练时间。实测预分词约耗时 6.2 秒（50M 子集），而总训练
-耗时为 31.5 秒，因此 merge 迭代是主要瓶颈。
+**TinyStories (b)** 预分词只扫一遍语料。主要时间花在 BPE merge：维护 pair 频数、
+反向索引，并更新被当前 pair 碰到的 pre-token。用 `pair_to_words` 和最大频数堆之后，
+每轮只动包含该 pair 的词，不必重扫整个词表。50M 子集上预分词约 6.2 秒，总训练
+31.5 秒，瓶颈在 merge。
 
-**OpenWebText (a)** 使用 32,000 词表训练耗时约 **389.4 秒（6.5 分钟）**；最长
-token 长度为 **51**，内容是一个重复出现的长数字串
-`100000000000000088817841970012523233890533447265625`。它不是自然语言词，
-但在网页语料中某些数字串会高频重复，因此被 BPE 合并成较长 token 是合理的。
+**OpenWebText (a)** 32,000 词表训练约 **389.4 秒（6.5 分钟）**。最长 token 长度
+**51**，是重复出现的数字串
+`100000000000000088817841970012523233890533447265625`。这不是自然语言词，网页里
+这类数字串会反复出现，BPE 把它合成一个长 token 说得通。
 
-**OpenWebText (b)** TinyStories tokenizer 更偏向儿童故事中的常见英文词和短句；
-OpenWebText tokenizer 的词表更大，覆盖网页中的数字、代码、URL、多语言和各种
-格式，因此能学习到更多长而专门化的 token。相应地，两个 tokenizer 的 merge
-规则取决于训练语料分布，不能简单认为较大的词表在所有领域都更优。
+**OpenWebText (b)** TinyStories tokenizer 更偏向儿童故事里的常见英文词和短句。
+OWT 词表更大，数字、代码、URL、多语言和网页格式都有，所以会长出更专门的 token。
+merge 规则跟着语料走，不能按词表大小直接比较两个 tokenizer。
 
 ---
 
@@ -151,7 +148,9 @@ happens.
 long would it take to tokenize the Pile dataset (825GB of text)?
 
 **(d)** Using your TinyStories and OpenWebText tokenizers, encode the respective
-training and development datasets into a sequence of integer token IDs.
+training and development datasets into a sequence of integer token IDs. We recommend
+serializing the token IDs as a NumPy array of datatype `uint16`. Why is `uint16`
+an appropriate choice?
 
 #### 回答
 
@@ -163,21 +162,22 @@ tokenizer 时为 **4.044 bytes/token**，使用 OWT tokenizer 时为 **3.857
 bytes/token**。OWT 样本使用 TinyStories tokenizer 时为 **3.588 bytes/token**，
 使用 OWT tokenizer 时为 **4.323 bytes/token**。
 
-**(b)** 在 OWT 样本上，TinyStories tokenizer 的压缩率从 OWT tokenizer 的
-4.323 降到 3.588 bytes/token，即需要更多 token 表示相同字节数，压缩效果约差
-17%。这符合 tokenizer 对训练语料分布有适应性：TinyStories 词表更偏向短小、
-简单的儿童故事文本，而 OWT 包含更广泛的网页词汇、数字和格式。
+**(b)** 在 OWT 样本上，TinyStories tokenizer 从 4.323 降到 3.588 bytes/token，
+同样字节要更多 token，大约差 17%。TinyStories 词表偏向短小儿童故事，OWT 覆盖网页
+词、数字和格式，跨域会吃亏。
 
 **(c)** 将四组样本的测量合并后，TinyStories tokenizer 吞吐量约为 **3.68
 MB/s**，处理 825GB Pile 预计需要 **62.25 小时（约 2.59 天）**；OWT
 tokenizer 吞吐量约为 **3.04 MB/s**，预计需要 **75.33 小时（约 3.14 天）**。
-该估算使用 `825,000,000,000 / throughput`，实际时间会随硬件、进程数和输入
-缓存情况变化。
+估算式是 `825,000,000,000 / throughput`。实际耗时还取决于硬件、进程数和输入缓存。
 
 **(d)** 已用 TinyStories 10K 和 OWT 32K tokenizer，按 special-token 边界分块、
 8 个 worker 并行编码各自的 train/valid 语料，输出 `uint16` `.npy`（可用
 `np.load(..., mmap_mode="r")` 加载）。产物在
 `assignment1-basics/data/tokenized/`，摘要在同目录 `meta.json`。
+
+`uint16` 合适：两个词表最大 id 分别是 9999 和 31999，都小于 `2^16 - 1 = 65535`，
+每个 token 两个字节就够；`int32` 会多占一倍磁盘和 memmap 体积。
 
 | 文件                    |        tokens | max_id | bytes/token |   耗时 |       吞吐 |
 | ----------------------- | ------------: | -----: | ----------: | -----: | ---------: |
@@ -186,10 +186,9 @@ tokenizer 吞吐量约为 **3.04 MB/s**，预计需要 **75.33 小时（约 3.14
 | `owt_train.npy`         | 2,793,355,176 |  31999 |       4.267 | 238.0s | 50.09 MB/s |
 | `owt_valid.npy`         |    68,041,541 |  31999 |       4.262 |   5.6s | 51.53 MB/s |
 
-`max_id` 分别落在 10K / 32K 词表范围内，确认使用的是本题要求的 artifact，
-而不是此前 32,768 词表。全量压缩率与 10 文档样本（TinyStories 4.044、OWT
-4.323 bytes/token）接近，说明样本估算没有系统性偏差。并行编码吞吐约
-50–55 MB/s，明显高于 (c) 中单进程小样本测得的 3–4 MB/s。
+`max_id` 落在 10K / 32K 词表范围内，用的是本题要求的 artifact，不是更早的 32,768
+词表。全量压缩率和 10 文档样本接近（TinyStories 4.044、OWT 4.323 bytes/token）。
+并行编码吞吐约 50–55 MB/s，比 (c) 里单进程小样本的 3–4 MB/s 高很多。
 
 ---
 
@@ -301,11 +300,9 @@ MHA 已包含 QKV/output 投影和两次 attention 矩阵乘。
 | GPT2-XL     | 3516.7699   | 37.78% | 57.53% | 4.68%   |
 
 
-随着模型参数增加，不同模块FLOPs趋势如下：
-
-- FFN：约 39.76% → 57.53%，随着 `d_model` 和层数增加，份额持续上升。
-- lm_head：约 27.10% → 4.68%，因为词表大小固定，其比例下降最明显。
-- MHA：约 33.13% → 37.78%，比例略升后趋于稳定。
+模型变大时，FFN 从约 39.76% 升到 57.53%，`d_model` 和层数上去之后它占的份额继续涨。
+lm_head 从约 27.10% 降到 4.68%，词表大小固定，比例掉得最明显。MHA 从约 33.13% 到
+37.78%，略升之后大致稳住。
 
 **(e)**
 
@@ -320,8 +317,8 @@ MHA 已包含 QKV/output 投影和两次 attention 矩阵乘。
 | lm_head   |       2.6349 TFLOPs |  1.97% |
 | Total     |     133.5777 TFLOPs |   100% |
 
-因此长上下文下 attention 的二次复杂度成为主要成本；FFN 和 lm head 虽然也增加
-16 倍，但在总 FLOPs 中的比例明显下降。
+长上下文下，attention 的二次项变成主要成本。FFN 和 lm head 也乘了 16，但占总 FLOPs
+的比例明显下降。
 
 ---
 
@@ -348,8 +345,7 @@ training iterations. Compare the loss behavior with the baseline learning rate
 |         `100` |          26.2714 |      2.3499×10⁻²³ | 先振荡后快速下降 |
 |        `1000` |          26.2714 |      2.43501×10¹⁸ | 发散             |
 
-增大学习率在稳定范围内可以加快收敛，但超过稳定范围后会导致更新过大、loss
-迅速增长。
+学习率在稳定范围内加大，loss 掉得更快；到 `1000` 时更新过大，loss 直接爆掉。
 
 ---
 
@@ -446,13 +442,40 @@ $$
 \approx 4.3214\times10^{21}\ \text{FLOPs}.
 $$
 
-H100 在 50% MFU 下的有效吞吐量为 `0.5 × 495 TFLOPs/s = 247.5 TFLOPs/s`，
-所以预计训练时间为约 **4,850 小时（约 202 天）**。该估算只计算模型前向和反向，
-没有额外计入数据读取、评估、checkpoint 和 AdamW 更新的开销。
+H100 在 50% MFU 下有效吞吐是 `0.5 × 495 TFLOPs/s = 247.5 TFLOPs/s`，
+大约要 **4,850 小时（约 202 天）**。这里只算了模型前向和反向，没有算读数据、
+评估、checkpoint 和 AdamW 更新。
 
 ---
 
 ## 5 Training a Transformer LM（实验记录草稿）
+
+### experiment_log：实验记录（3 分）
+
+#### 题干
+
+For your training and evaluation code, create experiment tracking infrastructure that allows you
+to track your experiments and loss curves with respect to gradient steps and wall-clock time.
+
+Deliverable: Logging infrastructure code for your experiments and an experiment log (a
+document of all the things you tried) for the assignment problems below in this section.
+
+#### 回答
+
+`experiments/train.py` 把指标写成 JSONL，默认路径是 checkpoint 旁边的 `ckpt.jsonl`。
+每 `log_interval=50` 步记一次 train；每 `eval_interval=1000` 步再记 valid。每条包含
+`step`、`wall_time_seconds`、`learning_rate`、`train_loss`，做验证时加上 `valid_loss`。
+曲线由 `experiments/plot_learning_curves.py` 从这些日志画出，横轴同时有 step 和墙钟。
+
+本节后面就是这次试过的全部训练，不再另开文档：
+
+| 实验                                         | 日志                                                           |
+| -------------------------------------------- | -------------------------------------------------------------- |
+| TinyStories 基线                             | `experiments/artifacts/tinystories_lm/ckpt.jsonl`              |
+| LR sweep（`1e-4` … `1e-1`）                  | `experiments/artifacts/sweeps/lr_*/ckpt.jsonl`                 |
+| batch sweep（16 / 32 / 64 / 128）            | `experiments/artifacts/sweeps/batch_*/ckpt.jsonl`（32 用基线） |
+| 消融（NoPE / SiLU / post-norm / 去 RMSNorm） | `experiments/artifacts/ablations/`                             |
+| OpenWebText                                  | `experiments/artifacts/owt_lm/ckpt.jsonl`                      |
 
 ### TinyStories 主实验（40k step）
 
@@ -479,22 +502,30 @@ tokenizer 编码的 `data/tokenized/tinystories_{train,valid}.npy`。Checkpoint 
 
 ![TinyStories 基线 train/valid 曲线](figures/ts_main.png)
 
-train 与 valid 全程接近，没有明显过拟合。最终 valid ≈ 1.40（约 perplexity 4.0）；
-记录到的最好 valid 在 39k，为 1.356。1k 之后的 valid 抖动来自 `eval_iters=20` 的
-估计方差，不代表崩溃。
+train 和 valid 一直很近，看不出过拟合。最终 valid 约 1.40（perplexity 约 4.0），
+最好是 39k 的 1.356。1k 之后 valid 有抖动，来自 `eval_iters=20` 的估计方差。
 
 ### 学习率 sweep
 
 固定 TinyStories 数据与模型、batch 32、40k step、warmup 400，只改 peak LR
-（`lr_min = 0.1 × lr_max`）。日志在 `experiments/artifacts/sweeps/lr_*/ckpt.jsonl`。
+（`lr_min = 0.1 × lr_max`）。按大约 3× 几何级数扫 `1e-4`、`3e-4`、`1e-3`、`3e-3`，再试
+`1e-2`；仍不炸之后加了 `1e-1`。日志在 `experiments/artifacts/sweeps/lr_*/ckpt.jsonl`。
 `1e-3` 与主实验 `tinystories_lm` 的指标一致。左图对 step，右图对墙钟。
 
 ![TinyStories 学习率 sweep](figures/ts_lr.png)
 
-四条都收敛，没有发散。`1e-4` 全程落后，40k 时仍比基线差约 0.27。`3e-4` 介于中间。
-`3e-3` 没有炸，但早期和最终都略差于 `1e-3`（1k 时 2.32 vs 2.27）。对本配置，
-**peak LR = 1e-3** 最好；再大没有更快，再小则欠拟合。最终 valid：`1e-4` 1.664，`3e-4` 1.470，
-`1e-3` **1.398**，`3e-3` 1.412。
+**(a)** 六条都跑完 40k，没有 NaN。最终 valid：`1e-4` 1.664，`3e-4` 1.470，`1e-3` **1.398**，
+`3e-3` 1.412，`1e-2` 1.559，`1e-1` 2.097。`1e-4` 全程落后，40k 时仍比基线差约 0.27。`3e-4`
+夹在中间。`3e-3` 没炸，但 1k 时 2.32、最终 1.412，都略差于 `1e-3`。`1e-2` 起步更差（1k 时
+valid 2.93），后来 cosine 从 1e-2 降到 1e-3，才掉到 1.56，一直没追上。这个配置里
+**peak LR = 1e-3** 最好：再小欠拟合，再大也不会更快。
+
+**(b)** `1e-2` 是最优值的 10 倍，仍然能收敛。`1e-1`（100 倍）才离开稳定区：warmup 到峰值后
+train 从 step 100 的 4.28 升到 2000 的 5.24，接下来大约 2 万步 valid 停在 4.5–5.4。cosine
+把 LR 降到 1e-2 附近之后才往下，最终 2.097，最好 2.061。没有 NaN，是因为 `grad clip=1.0`
+和衰减把更新卡住了，但高峰 LR 那段基本没在学。最优 `1e-3` 紧挨着开始变差的 `3e-3`（最终差
+0.014）；`1e-2` 差 0.16 仍收敛；`1e-1` 在高 LR 段 loss 上升并长期走平，这就是这条要的发散
+曲线。
 
 ### batch size sweep
 
@@ -512,11 +543,23 @@ PDF 未规定是否对齐 token。本实验固定总 token 为基线的 `32 × 2
 
 ![TinyStories batch size sweep](figures/ts_batch.png)
 
-token 对齐后墙钟几乎一样（约 31 min）：5090 上瓶颈是算力，步数翻倍、batch 减半，总 FLOPs 不变。
-最终 **16 明显更差**（梯度噪声大）；32 / 64 / 128 收在 1.39–1.42，没有从 32 再加大的稳定收益。
-未做 linear LR scaling。后续主实验保持 batch 32。
+token 对齐后四条墙钟都在 31 min 左右。5090 上是算力瓶颈：batch 减半、步数翻倍，总 FLOPs
+不变。batch=16 明显更差，梯度更噪。32 / 64 / 128 收在 1.39–1.42，再加大没有稳定变好。
+没做 linear LR scaling，也没按 batch 重调 LR。题目说从 1 扫到显存上限；这次只跑了 16 到 128，
+没跑 batch=1，也没顶到 5090 的显存上限。后面主实验仍用 batch 32。
 
-### 生成样例与 temperature 对比
+### generate：生成样例与 temperature 对比
+
+#### 题干
+
+Using your decoder and your trained checkpoint, report the text generated by your model. You
+may need to manipulate decoder parameters (temperature, top-p, etc.) to get fluent outputs.
+
+Deliverable: Text dump of at least 256 tokens of text (or until the first `<|endoftext|>` token),
+and a brief comment on the fluency of this output and at least two factors which affect how good
+or bad this output is.
+
+#### 回答
 
 `experiments/decoding.py` 从 `tinystories_lm/ckpt.pt` 加载与训练相同的架构
 （vocab 10000，context 256，d_model 512，4 层，16 heads，d_ff 1344）。采样为
@@ -534,7 +577,11 @@ The people in the town were scared of the monster. They did not know what to do.
 Once upon a time, there was a little girl named Mia. She had a small garden where she grew pretty flowers. One day, she saw a new flower in her garden. It was red and smelled very nice. Mia thought the new flower was attractive, so she wanted to show it
 ```
 
-第一篇能收束，用词符合 TinyStories，但因果已经偏松（猫的计划没有下文；怪物突然会说话）。
+第一篇能收束，用词还像 TinyStories，但因果已经偏松（猫的计划没有下文；怪物突然会说话）。
+两个因素影响比较大。一是 temperature：0.3 把分布压得太尖，反复走同一套儿童故事模板；1.2
+让长尾 token 进来，破词、角色乱跳。0.9 还能读完一篇。二是 nucleus（`top_p=0.9`）以及是否
+在 `<|endoftext|>` 停下：关掉 EOS 停才能凑满 256 token，但跨过第一篇故事边界之后质量会掉。
+书面样例取 temperature=0.9、`top_p=0.9`。
 
 | temperature | 第一篇                                          | 观感                             |
 | ----------: | ----------------------------------------------- | -------------------------------- |
@@ -561,7 +608,7 @@ And that is how Fluffy learned to friendship and comfort carry people.
 Sam loves hits hairy!" He chasing the pulls of shots for fun. ... Sam puts down theing soldiers and runs to the Dodo peiding. ... HeAre heam also Spot?
 ```
 
-对本模型，书面结论取 **0.7–1.0**：0.3 偏复读，1.2 过高。作业要求的 ≥256 token 样例已由 0.9 那次满足。
+对本模型，temperature 取 0.7–1.0。0.3 偏复读，1.2 过高。≥256 token 的样例用的是 0.9 那次。
 
 ### 架构消融（7.3）
 
@@ -581,7 +628,7 @@ Sam loves hits hairy!" He chasing the pulls of shots for fun. ... Sam puts down 
 | 去 RMSNorm                                 | `1e-3` |       发散 | —           |
 | 去 RMSNorm                                 | `1e-4` |      2.188 | 2.131 @ 39k |
 
-除去掉 RMSNorm 外都收敛，且都比基线差。SiLU 最接近，NoPE 掉得最多。各条曲线见下面分节。
+除了去掉 RMSNorm，其余都收敛，也都比基线差。SiLU 最接近，NoPE 掉得最多。各条曲线见下面分节。
 
 #### layer_norm_ablation：去掉 RMSNorm
 
@@ -602,12 +649,11 @@ curve for the best learning rate. A few sentences of commentary on the impact of
 ![去掉 RMSNorm](figures/ablation_rmsnorm.png)
 
 `1e-3` 下 step 50 的 train loss 已到约 7×10¹⁰，1k 时 valid 约 5.46×10¹⁸。之后 train 掉回个位数，
-10k 时 valid 仍约 12.4；日志只到 step 16200。原最优 LR 不能用。
+10k 时 valid 仍约 12.4；日志只到 step 16200。原来的最优 LR 不能用。
 
-`1e-4` 能跑完 40k（约 30 min）。前 1k 仍然冲到四位数，之后下降，20k 后走平，最终 2.188。同一 LR
-下有 RMSNorm 的 sweep 是 1.664。降 LR 避免了彻底发散，但稳定不等于能追上：没有 RMSNorm，激活和
-梯度尺度会漂，只能用更小步长，40k 内也拟合不好。RMSNorm 既提高可稳定的 LR 上限，也让同样小 LR
-下优化更有效。书面曲线取这两条：`1e-3` 发散，`1e-4` 是能稳住的较低 LR。
+`1e-4` 能跑完 40k（约 30 min）。前 1k 仍然冲到四位数，之后下降，20k 后走平，最终 2.188。同一
+LR 下有 RMSNorm 的 sweep 是 1.664。降 LR 不会彻底发散，但 2.188 远追不上 1.664：没有
+RMSNorm 时激活和梯度尺度会漂，步长只能更小，40k 内也到不了基线。`1e-3` 发散，`1e-4` 能稳住。
 
 #### pre_norm_ablation：post-norm
 
@@ -624,8 +670,8 @@ post-norm 为 `RMSNorm(x + Attn(x))` 再 `RMSNorm(z + FFN(z))`，其余与基线
 
 ![pre-norm vs post-norm](figures/ablation_post_norm.png)
 
-post-norm 全程稳定，没有爆炸。valid 始终比 pre-norm 高约 0.04–0.07，最终 1.440 vs 1.398。norm
-放在残差之后会改残差支路的尺度，这个 4 层模型也看得到差距。后续保持 pre-norm。
+post-norm 全程稳定，没有爆炸。valid 始终比 pre-norm 高约 0.04–0.07，最终 1.440 vs 1.398。
+norm 放在残差后面，残差支路的尺度会变，4 层也看得出来。后面仍用 pre-norm。
 
 #### no_pos_emb：NoPE
 
@@ -642,8 +688,8 @@ Deliverable: A learning curve comparing the performance of RoPE and NoPE.
 
 ![RoPE vs NoPE](figures/ablation_nope.png)
 
-NoPE 能训完，说明因果 mask 能提供一部分位置信息。但全程落后，最终 1.461，是四个非发散消融里
-最差的。这个规模上 RoPE 仍然有用。
+NoPE 能训完，因果 mask 能提供一部分位置信息。但全程落后，最终 1.461，四个没发散的消融里最差。
+这个规模上 RoPE 仍然有用。
 
 #### swiglu_ablation：SwiGLU vs SiLU
 
@@ -661,8 +707,7 @@ SiLU 用两套矩阵、`d_ff=2048`；SwiGLU 用三套矩阵、`d_ff=1344`。参�
 
 ![SwiGLU vs SiLU](figures/ablation_silu.png)
 
-SiLU 全程略差，最终 1.409 vs 1.398，差距最小。门控有一点好处，但在 TinyStories、4 层这个尺度上
-不是决定性的。
+SiLU 全程略差，最终 1.409 vs 1.398，差距最小。门控好一点，这个尺度上差得不多。
 
 ### OpenWebText 主实验（7.4）
 
@@ -690,13 +735,13 @@ the same model and compute budget as TinyStories?
 
 ![OpenWebText train/valid 曲线](figures/owt_main.png)
 
-train 与 valid 接近，曲线单调往下，没有过拟合或发散。最终 valid ≈ **4.06**（最好 4.039 @ 34k），
-perplexity 约 **58**。TinyStories 同配置是 valid 1.40、perplexity 约 4.0。
+train 和 valid 接近，曲线单调往下，没有过拟合，也没有发散。最终 valid 约 **4.06**（最好 4.039
+@ 34k），perplexity 约 **58**。TinyStories 同配置是 valid 1.40、perplexity 约 4.0。
 
-这两个 loss 不能直接当「谁训得更好」。随机预测的交叉熵大约是 `ln V`：10K 词表约 9.21，32K 约
-10.37，词表只解释大约 1.2 的差距，剩下的来自数据。TinyStories 是短、重复的儿童故事；OWT 是网页
-抓取，主题、体裁、数字和格式都杂得多。同样看 3.28×10⁸ token，OWT 只扫过训练集的一小部分，4 层
-512-d 模型也装不下这个分布。所以 OWT 的 4.06 仍然远好于随机（10.37），但离「流利」还差很远。
+这两个 valid 不能直接比。随机预测的交叉熵大约是 `ln V`：10K 词表约 9.21，32K 约 10.37，词表
+只解释大约 1.2 的差距，剩下来自数据。TinyStories 是短、重复的儿童故事；OWT 是网页抓取，主题、
+体裁、数字和格式都更杂。同样看 3.28×10⁸ token，OWT 只扫过训练集一小部分，4 层 512-d 也盖不住。
+4.06 比随机的 10.37 好很多，但还远谈不上流利。
 
 **生成（temperature + `top_p=0.9`，新生成 256 token，不在 EOS 处停）。** 对照仍用 TinyStories 的
 prompt `Once upon a time`，方便并排看。
@@ -720,6 +765,6 @@ The development of some familiar changes in game situation has been explained by
 |         0.9 | 语法勉强，内容飘，专有名词乱编                                                 |
 |         1.2 | 破词、假 URL、数字碎片                                                         |
 
-同样模型和算力，OWT 生成更差，是因为数据更难、有效 epoch 更少，不是训练坏了。TinyStories 的
-1.40 对应一个窄分布上已经比较确定的下一个词；OWT 的 4.06 对应网页上下一个词仍然很不确定。这个
-规模只够在 OWT 上学到浅层英语统计，不够学到连贯篇章。
+同样的模型和算力，OWT 生成更差，是因为数据更难、有效 epoch 更少。TinyStories 的 1.40 表示
+下一个词已经比较确定；OWT 的 4.06 表示网页上下一个词仍很不确定。这个规模在 OWT 上只能学到
+浅层英语统计，写不出连贯篇章。
