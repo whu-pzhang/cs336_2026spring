@@ -477,15 +477,7 @@ tokenizer 编码的 `data/tokenized/tinystories_{train,valid}.npy`。Checkpoint 
 每步 token 数 `32 × 256 = 8192`，40k 步共约 **3.28×10⁸** token（约 0.61 epoch）。
 墙钟 **1872 s（约 31.2 min）**，约 21.4 step/s。
 
-|  step | train_loss | valid_loss |
-| ----: | ---------: | ---------: |
-|  1000 |      2.237 |      2.272 |
-|  5000 |      1.754 |      1.767 |
-| 10000 |      1.621 |      1.634 |
-| 20000 |      1.451 |      1.536 |
-| 30000 |      1.501 |      1.446 |
-| 39000 |      1.387 |      1.356 |
-| 40000 |      1.332 |      1.398 |
+![TinyStories 基线 train/valid 曲线](figures/ts_main.png)
 
 train 与 valid 全程接近，没有明显过拟合。最终 valid ≈ 1.40（约 perplexity 4.0）；
 记录到的最好 valid 在 39k，为 1.356。1k 之后的 valid 抖动来自 `eval_iters=20` 的
@@ -495,23 +487,14 @@ train 与 valid 全程接近，没有明显过拟合。最终 valid ≈ 1.40（�
 
 固定 TinyStories 数据与模型、batch 32、40k step、warmup 400，只改 peak LR
 （`lr_min = 0.1 × lr_max`）。日志在 `experiments/artifacts/sweeps/lr_*/ckpt.jsonl`。
-`1e-3` 与主实验 `tinystories_lm` 的指标一致。
+`1e-3` 与主实验 `tinystories_lm` 的指标一致。左图对 step，右图对墙钟。
 
-valid_loss（`eval_iters=20`）：
-
-|  step | `1e-4` | `3e-4` |    `1e-3` | `3e-3` |
-| ----: | -----: | -----: | --------: | -----: |
-|  1000 |  3.017 |  2.572 | **2.272** |  2.323 |
-|  5000 |  2.216 |  1.860 | **1.767** |  1.822 |
-| 10000 |  1.919 |  1.684 | **1.634** |  1.713 |
-| 20000 |  1.750 |  1.567 | **1.536** |  1.615 |
-| 30000 |  1.693 |  1.503 | **1.446** |  1.493 |
-| 39000 |  1.619 |  1.431 | **1.356** |  1.373 |
-| 40000 |  1.664 |  1.470 | **1.398** |  1.412 |
+![TinyStories 学习率 sweep](figures/ts_lr.png)
 
 四条都收敛，没有发散。`1e-4` 全程落后，40k 时仍比基线差约 0.27。`3e-4` 介于中间。
 `3e-3` 没有炸，但早期和最终都略差于 `1e-3`（1k 时 2.32 vs 2.27）。对本配置，
-**peak LR = 1e-3** 最好；再大没有更快，再小则欠拟合。
+**peak LR = 1e-3** 最好；再大没有更快，再小则欠拟合。最终 valid：`1e-4` 1.664，`3e-4` 1.470，
+`1e-3` **1.398**，`3e-3` 1.412。
 
 ### batch size sweep
 
@@ -525,15 +508,9 @@ PDF 未规定是否对齐 token。本实验固定总 token 为基线的 `32 × 2
 |    64 | 20000 |    200 | 1861 s |      1.423 |
 |   128 | 10000 |    100 | 1911 s |      1.393 |
 
-按相同 token 进度对齐后的 valid_loss：
+左图按 token 进度对齐，右图对墙钟。
 
-| token 进度 |    16 |    32 |    64 |              128 |
-| ---------- | ----: | ----: | ----: | ---------------: |
-| 10%        | 1.844 | 1.803 | 1.788 |            1.888 |
-| 25%        | 1.752 | 1.634 | 1.619 | ~1.60（3k step） |
-| 50%        | 1.619 | 1.536 | 1.543 |            1.497 |
-| 75%        | 1.493 | 1.446 | 1.451 | ~1.39（8k step） |
-| 100%       | 1.451 | 1.398 | 1.423 |            1.393 |
+![TinyStories batch size sweep](figures/ts_batch.png)
 
 token 对齐后墙钟几乎一样（约 31 min）：5090 上瓶颈是算力，步数翻倍、batch 减半，总 FLOPs 不变。
 最终 **16 明显更差**（梯度噪声大）；32 / 64 / 128 收在 1.39–1.42，没有从 32 再加大的稳定收益。
@@ -585,3 +562,164 @@ Sam loves hits hairy!" He chasing the pulls of shots for fun. ... Sam puts down 
 ```
 
 对本模型，书面结论取 **0.7–1.0**：0.3 偏复读，1.2 过高。作业要求的 ≥256 token 样例已由 0.9 那次满足。
+
+### 架构消融（7.3）
+
+固定 TinyStories 数据与基线超参（batch 32、40k step、warmup 400、peak LR `1e-3`，除非另行注明），只改
+`TransformerLM` 的开关：`use_rmsnorm`、`norm_type`、`use_rope`、`ffn_type`。SiLU 消融按题目把
+`d_ff` 设为 `4 × d_model = 2048`，对齐 SwiGLU 的参数量。日志在
+`experiments/artifacts/ablations/`。基线数字与 `tinystories_lm` 一致。
+
+最终 valid_loss（`eval_iters=20`）：
+
+| 设置                                       |     LR | 最终 valid | 最好 valid  |
+| ------------------------------------------ | -----: | ---------: | ----------- |
+| 基线（pre-norm + RoPE + SwiGLU + RMSNorm） | `1e-3` |  **1.398** | 1.356 @ 39k |
+| SiLU                                       | `1e-3` |      1.409 | 1.368 @ 39k |
+| post-norm                                  | `1e-3` |      1.440 | 1.400 @ 39k |
+| NoPE                                       | `1e-3` |      1.461 | 1.422 @ 39k |
+| 去 RMSNorm                                 | `1e-3` |       发散 | —           |
+| 去 RMSNorm                                 | `1e-4` |      2.188 | 2.131 @ 39k |
+
+除去掉 RMSNorm 外都收敛，且都比基线差。SiLU 最接近，NoPE 掉得最多。各条曲线见下面分节。
+
+#### layer_norm_ablation：去掉 RMSNorm
+
+##### 题干
+
+Remove all of the RMSNorms from your Transformer and train. What happens at the previous
+optimal learning rate? Can you get stability by using a lower learning rate?
+
+Deliverable: A learning curve for when you remove RMSNorms and train, as well as a learning
+curve for the best learning rate. A few sentences of commentary on the impact of RMSNorm.
+
+##### 回答
+
+去掉 block 内两个 RMSNorm 和最后的 `ln_final`（换成 `Identity`）。先用原最优 LR `1e-3`，发散后再训
+`1e-4`（`lr_min=1e-5`）。左图对数轴看 `1e-3` 爆炸；右图从 5k 起画线性轴（1k 时去 norm 的 valid 仍是
+11545），对照有 RMSNorm 的同一 LR。
+
+![去掉 RMSNorm](figures/ablation_rmsnorm.png)
+
+`1e-3` 下 step 50 的 train loss 已到约 7×10¹⁰，1k 时 valid 约 5.46×10¹⁸。之后 train 掉回个位数，
+10k 时 valid 仍约 12.4；日志只到 step 16200。原最优 LR 不能用。
+
+`1e-4` 能跑完 40k（约 30 min）。前 1k 仍然冲到四位数，之后下降，20k 后走平，最终 2.188。同一 LR
+下有 RMSNorm 的 sweep 是 1.664。降 LR 避免了彻底发散，但稳定不等于能追上：没有 RMSNorm，激活和
+梯度尺度会漂，只能用更小步长，40k 内也拟合不好。RMSNorm 既提高可稳定的 LR 上限，也让同样小 LR
+下优化更有效。书面曲线取这两条：`1e-3` 发散，`1e-4` 是能稳住的较低 LR。
+
+#### pre_norm_ablation：post-norm
+
+##### 题干
+
+Modify your pre-norm Transformer implementation into a post-norm one. Train with the post-norm
+model and see what happens.
+
+Deliverable: A learning curve for a post-norm Transformer, compared to the pre-norm one.
+
+##### 回答
+
+post-norm 为 `RMSNorm(x + Attn(x))` 再 `RMSNorm(z + FFN(z))`，其余与基线相同。
+
+![pre-norm vs post-norm](figures/ablation_post_norm.png)
+
+post-norm 全程稳定，没有爆炸。valid 始终比 pre-norm 高约 0.04–0.07，最终 1.440 vs 1.398。norm
+放在残差之后会改残差支路的尺度，这个 4 层模型也看得到差距。后续保持 pre-norm。
+
+#### no_pos_emb：NoPE
+
+##### 题干
+
+Modify your Transformer implementation with RoPE to remove the position embedding information
+entirely, and see what happens.
+
+Deliverable: A learning curve comparing the performance of RoPE and NoPE.
+
+##### 回答
+
+去掉 RoPE，注意力不再使用位置编码，其余不变。
+
+![RoPE vs NoPE](figures/ablation_nope.png)
+
+NoPE 能训完，说明因果 mask 能提供一部分位置信息。但全程落后，最终 1.461，是四个非发散消融里
+最差的。这个规模上 RoPE 仍然有用。
+
+#### swiglu_ablation：SwiGLU vs SiLU
+
+##### 题干
+
+Compare SwiGLU feed-forward networks with SiLU feed-forward networks
+`FFN_SiLU(x) = W2 SiLU(W1 x)`, using `d_ff = 4 × d_model` so that parameter counts approximately match.
+
+Deliverable: A learning curve comparing SwiGLU and SiLU, plus a few sentences discussing the findings.
+
+##### 回答
+
+SiLU 用两套矩阵、`d_ff=2048`；SwiGLU 用三套矩阵、`d_ff=1344`。参数量分别约为
+`2 × 512 × 2048 = 2.10×10⁶` 和 `3 × 512 × 1344 = 2.06×10⁶`。
+
+![SwiGLU vs SiLU](figures/ablation_silu.png)
+
+SiLU 全程略差，最终 1.409 vs 1.398，差距最小。门控有一点好处，但在 TinyStories、4 层这个尺度上
+不是决定性的。
+
+### OpenWebText 主实验（7.4）
+
+#### 题干
+
+Train your language model on OpenWebText with the same model architecture and total training
+iterations as TinyStories. How well does this model do?
+
+Deliverable: A learning curve of your language model on OpenWebText. Describe the difference
+in losses from TinyStories – how should we interpret these losses?
+
+Deliverable: Generated text from OpenWebText LM, in the same format as the TinyStories
+outputs. How is the fluency of this text? Why is the output quality worse even though we have
+the same model and compute budget as TinyStories?
+
+#### 回答
+
+同架构、同 40k step、同 batch 32、同 LR `1e-3` / `1e-4`，只把词表换成 OWT 32K，数据换成
+`data/tokenized/owt_{train,valid}.npy`。未另调超参。日志与 checkpoint：
+`experiments/artifacts/owt_lm/`。
+
+墙钟 **2730 s（约 45.5 min）**，约 14.7 step/s，比 TinyStories 的 31 min / 21.4 step/s 慢，主要是
+词表从 10K 到 32K，embedding 和 lm head 更大。token 预算仍是 `32 × 256 × 40000 = 3.28×10⁸`，
+相对 OWT 训练集 2.79×10⁹ token 只有约 **0.12 epoch**（TinyStories 约 0.61 epoch）。
+
+![OpenWebText train/valid 曲线](figures/owt_main.png)
+
+train 与 valid 接近，曲线单调往下，没有过拟合或发散。最终 valid ≈ **4.06**（最好 4.039 @ 34k），
+perplexity 约 **58**。TinyStories 同配置是 valid 1.40、perplexity 约 4.0。
+
+这两个 loss 不能直接当「谁训得更好」。随机预测的交叉熵大约是 `ln V`：10K 词表约 9.21，32K 约
+10.37，词表只解释大约 1.2 的差距，剩下的来自数据。TinyStories 是短、重复的儿童故事；OWT 是网页
+抓取，主题、体裁、数字和格式都杂得多。同样看 3.28×10⁸ token，OWT 只扫过训练集的一小部分，4 层
+512-d 模型也装不下这个分布。所以 OWT 的 4.06 仍然远好于随机（10.37），但离「流利」还差很远。
+
+**生成（temperature + `top_p=0.9`，新生成 256 token，不在 EOS 处停）。** 对照仍用 TinyStories 的
+prompt `Once upon a time`，方便并排看。
+
+**主样例（temperature=0.9）：**
+
+```text
+Once upon a time, the last time we would need to play away from the X or X and then have to use a timeout and stay in place.
+
+Now that we have a close game about AoN’s post-round campaign in the Czech Republic, we have a big chance we’re going to get to the top 8 of the match. With a more press release date we can be run and how many times we can get to get to the top 10 or 7 when we give our players a bit of practice on our roster and we get to get them on the team.
+
+The development of some familiar changes in game situation has been explained by the player design and if we have a full training plan for him, we can have some details in the management of the player design. This is the players who have already taken some fun steps and are willing to take his steps and make the play worse.
+```
+
+局部还像英文，但主题从童话立刻滑到比赛和新闻腔，句子能接上词，接不上意思。换网页向 prompt
+`According to` / `In 2016` 也一样：像报告或时政开头，数字和实体对不上，几句之后跑题。
+
+| temperature | 观感                                                                           |
+| ----------: | ------------------------------------------------------------------------------ |
+|         0.3 | 立刻复读（"in the middle of the night" 循环），没有 TinyStories 那种完整小故事 |
+|         0.9 | 语法勉强，内容飘，专有名词乱编                                                 |
+|         1.2 | 破词、假 URL、数字碎片                                                         |
+
+同样模型和算力，OWT 生成更差，是因为数据更难、有效 epoch 更少，不是训练坏了。TinyStories 的
+1.40 对应一个窄分布上已经比较确定的下一个词；OWT 的 4.06 对应网页上下一个词仍然很不确定。这个
+规模只够在 OWT 上学到浅层英语统计，不够学到连贯篇章。

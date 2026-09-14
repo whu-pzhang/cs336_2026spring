@@ -1,6 +1,6 @@
 # CS336 作业进度
 
-最后更新：2026-09-07
+最后更新：2026-09-14
 
 实现写在各 `assignmentN-*/`，书面草稿在 `notes/assignmentN/writeup.md`。本文件只记进度，不记题解。
 
@@ -12,27 +12,32 @@
 书面：`notes/assignment1/writeup.md`  
 推导笔记：`notes/assignment1/notes.md`
 
-当前阶段：**核心实现与 TinyStories 主实验、生成样例、LR / batch sweep 已完成。下一步是架构消融、OWT 和 `writeup.pdf`。**
+当前阶段：**核心实现、TinyStories / 消融 / OWT 实验和书面草稿已齐。下一步是 leaderboard（可选）和** `writeup.pdf`**。**
 
 ### 实现
 
-| 模块 | 状态 | 位置 |
-|------|------|------|
-| BPE 训练 `train_bpe` | 完成 | `cs336_basics/tokenizer.py` |
-| `Tokenizer` encode / decode / iterable | 完成 | 同上 |
-| BPE 训练脚本与 artifact 导出 | 完成 | `experiments/train_tokenizers.py` |
-| tokenizer experiments | 完成 | `experiments/tokenizer_experiments.py` |
-| 并行数据集 tokenization | 完成；10K/32K 全量 train/valid `.npy` 已生成 | `experiments/tokenize_datasets.py` → `data/tokenized/` |
-| Linear / Embedding / RMSNorm / SwiGLU / RoPE | 完成 | `cs336_basics/llm.py` |
-| softmax / SDPA / MHA / TransformerBlock / LM | 完成 | 同上 |
-| SiLU | 完成 | `llm.silu` → `adapters.run_silu` |
-| cross-entropy | 完成 | `llm.cross_entropy` → `adapters.run_cross_entropy` |
-| AdamW | 完成 | `cs336_basics/optimizer.py` → `adapters.get_adamw_cls` |
-| cosine LR schedule | 完成 | `optimizer.get_lr_cosine_schedule` |
-| gradient clipping | 完成 | `optimizer.gradient_clipping`（全局 L2） |
-| get_batch | 完成 | `cs336_basics/training.py` → `adapters.run_get_batch` |
-| checkpoint save / load | 完成 | `training.save/load_checkpoint` → 对应 adapters |
-| 训练循环（training_together） | 完成；已验证训练、验证、JSONL 日志、checkpoint 和 resume | `experiments/train.py` |
+
+| 模块                                                 | 状态                                                     | 位置                                                   |
+| ---------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------ |
+| BPE 训练 `train_bpe`                                 | 完成                                                     | `cs336_basics/tokenizer.py`                            |
+| `Tokenizer` encode / decode / iterable               | 完成                                                     | 同上                                                   |
+| BPE 训练脚本与 artifact 导出                         | 完成                                                     | `experiments/train_tokenizers.py`                      |
+| tokenizer experiments                                | 完成                                                     | `experiments/tokenizer_experiments.py`                 |
+| 并行数据集 tokenization                              | 完成；10K/32K 全量 train/valid `.npy` 已生成             | `experiments/tokenize_datasets.py` → `data/tokenized/` |
+| Linear / Embedding / RMSNorm / SwiGLU / RoPE         | 完成                                                     | `cs336_basics/llm.py`                                  |
+| softmax / SDPA / MHA / TransformerBlock / LM         | 完成                                                     | 同上                                                   |
+| SiLU                                                 | 完成                                                     | `llm.silu` → `adapters.run_silu`                       |
+| cross-entropy                                        | 完成                                                     | `llm.cross_entropy` → `adapters.run_cross_entropy`     |
+| AdamW                                                | 完成                                                     | `cs336_basics/optimizer.py` → `adapters.get_adamw_cls` |
+| cosine LR schedule                                   | 完成                                                     | `optimizer.get_lr_cosine_schedule`                     |
+| gradient clipping                                    | 完成                                                     | `optimizer.gradient_clipping`（全局 L2）               |
+| get_batch                                            | 完成                                                     | `cs336_basics/training.py` → `adapters.run_get_batch`  |
+| checkpoint save / load                               | 完成                                                     | `training.save/load_checkpoint` → 对应 adapters        |
+| 训练循环（training_together）                        | 完成；已验证训练、验证、JSONL 日志、checkpoint 和 resume | `experiments/train.py`                                 |
+| 架构消融开关（no RMSNorm / post-norm / NoPE / SiLU） | 完成；`--ablation` 接入训练脚本                          | `cs336_basics/llm.py`、`experiments/train.py`          |
+
+
+
 
 ### 单测
 
@@ -43,15 +48,19 @@
 
 ### 书面题
 
-| 题 | 状态 |
-|----|------|
-| unicode1 / unicode2 | 已完成；补充编码长度和非法 UTF-8 示例 |
-| transformer_accounting | 已完成；补充参数量、FLOPs 表格和长上下文分析 |
-| learning_rate_tuning | 已写；脚本和 JSON 结果已生成 |
-| adamw_accounting | 已完成；显存、batch size、AdamW FLOPs、H100 训练时间已补齐 |
-| train_bpe_tinystories / train_bpe_expts_owt | 已写；当前基于 50M/5M 子集 |
-| tokenizer_experiments | 已写；2.7(d) 已用 10K/32K 词表重编码 |
-| 第 5–7 节训练 / 消融实验 | TinyStories 主实验、LR / batch sweep、生成样例已记；消融 / OWT 未写 |
+
+| 题                                          | 状态                                                                                            |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| unicode1 / unicode2                         | 已完成；补充编码长度和非法 UTF-8 示例                                                           |
+| transformer_accounting                      | 已完成；补充参数量、FLOPs 表格和长上下文分析                                                    |
+| learning_rate_tuning                        | 已写；脚本和 JSON 结果已生成                                                                    |
+| adamw_accounting                            | 已完成；显存、batch size、AdamW FLOPs、H100 训练时间已补齐                                      |
+| train_bpe_tinystories / train_bpe_expts_owt | 已写；当前基于 50M/5M 子集                                                                      |
+| tokenizer_experiments                       | 已写；2.7(d) 已用 10K/32K 词表重编码                                                            |
+| 第 5–7 节训练 / 消融 / OWT                  | TinyStories 主实验、LR / batch、生成、7.3 消融、7.4 OWT 已记；leaderboard 与 `writeup.pdf` 未做 |
+
+
+
 
 ### 实验与交付
 
@@ -65,16 +74,21 @@
 - [x] 端到端训练 Transformer LM（CUDA，TinyStories 40k step；`experiments/artifacts/tinystories_lm/ckpt.pt`）
 - [x] TinyStories 学习率 sweep（`1e-4` / `3e-4` / `1e-3` / `3e-3`；1e-3 最好）
 - [x] TinyStories batch size sweep（16 / 32 / 64 / 128，对齐 token；32 与 128 接近，16 更差）
-- [ ] 架构消融、OWT 主实验、leaderboard
-- [ ] 实验记录、生成样例、`writeup.pdf`
+- [x] 架构消融（NoPE / SiLU / post-norm / 去 RMSNorm；`1e-3` 去 norm 发散，`1e-4` 最终 valid 2.188）
+- [x] OWT 主实验（同架构 40k；最终 valid 4.056，约 45.5 min；生成样例已记）
+- [ ] leaderboard（7.5，可选；45 min B200，OWT valid < 5.0）
+- [ ] 将 `notes/assignment1/writeup.md` 排成 `writeup.pdf`
+
+
 
 ### 建议下一步
 
-1. 架构消融（需改模型后再训）
-2. OWT 主实验（`bash experiments/run_experiments.sh owt`）
-3. 实验日志和最终 `writeup.pdf`
+1. 决定是否做 leaderboard（7.5）
+2. 把书面草稿排成 `writeup.pdf`
 
 ---
+
+
 
 ## Assignment 2 — Systems
 
