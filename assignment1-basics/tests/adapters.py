@@ -47,7 +47,7 @@ def run_linear(
         Float[Tensor, "... d_out"]: The transformed output of your linear module.
     """
 
-    m = Linear(d_in, d_out, device=weights.device, dtype=weights.dtype)
+    m = Linear(d_in, d_out)
     m.load_state_dict({"weight": weights})
 
     output = m(in_features)
@@ -73,7 +73,7 @@ def run_embedding(
         Float[Tensor, "... d_model"]: Batch of embeddings returned by your Embedding layer.
     """
 
-    embedding = Embedding(vocab_size, d_model, device=weights.device, dtype=weights.dtype)
+    embedding = Embedding(vocab_size, d_model)
     embedding.load_state_dict({"weight": weights})
     output = embedding(token_ids)
     return output
@@ -108,9 +108,7 @@ def run_swiglu(
     # swiglu.w1.weight.data = w1_weight
     # swiglu.w2.weight.data = w2_weight
     # swiglu.w3.weight.data = w3_weight
-    device = w1_weight.device
-    dtype = w1_weight.dtype
-    swiglu = SwiGLUFFN(d_model, d_ff, device=device, dtype=dtype)
+    swiglu = SwiGLUFFN(d_model, d_ff)
     swiglu.load_state_dict({"w1.weight": w1_weight, "w2.weight": w2_weight, "w3.weight": w3_weight})
     result = swiglu(in_features)
     return result
@@ -219,7 +217,8 @@ def run_multihead_self_attention_with_rope(
         Float[Tensor, " ... sequence_length d_model"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    mha = MultiHeadAttention(d_model, num_heads, theta, max_seq_len)
+    rope = RotaryPositionalEmbedding(max_seq_len, d_model // num_heads, theta)
+    mha = MultiHeadAttention(d_model, num_heads, rope)
     mha.load_state_dict(
         {
             "q_proj.weight": q_proj_weight,
@@ -251,7 +250,7 @@ def run_rope(
     Returns:
         Float[Tensor, " ... sequence_length d_k"]: Tensor with RoPEd input.
     """
-    rope = RotaryPositionalEmbedding(theta, d_k, max_seq_len)
+    rope = RotaryPositionalEmbedding(max_seq_len, d_k, theta)
     result = rope(in_query_or_key, token_positions)
     return result
 
@@ -326,7 +325,8 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    block = TransformerBlock(d_model, num_heads, d_ff, theta, max_seq_len)
+    rope = RotaryPositionalEmbedding(max_seq_len, d_model // num_heads, theta)
+    block = TransformerBlock(d_model, num_heads, d_ff, positional_encoder=rope)
     block.load_state_dict(weights)
     return block(in_features)
 
@@ -410,7 +410,7 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    lm = TransformerLM(vocab_size, context_length, d_model, num_layers, num_heads, d_ff, theta=rope_theta)
+    lm = TransformerLM(vocab_size, context_length, d_model, num_layers, num_heads, d_ff, rope_theta=rope_theta)
     lm.load_state_dict(weights)
     return lm(in_indices)
 
@@ -435,7 +435,7 @@ def run_rmsnorm(
         Float[Tensor,"... d_model"]: Tensor of with the same shape as `in_features` with the output of running
         RMSNorm of the `in_features`.
     """
-    rmsnorm = RMSNorm(d_model, eps, device=weights.device, dtype=weights.dtype)
+    rmsnorm = RMSNorm(d_model, eps)
     rmsnorm.load_state_dict({"weight": weights})
     result = rmsnorm(in_features)
     return result
