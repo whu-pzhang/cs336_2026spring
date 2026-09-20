@@ -1,0 +1,63 @@
+{
+  "model": {
+    "architecture_schema_version": 1,
+    "num_layers": 4,
+    "num_heads": 16,
+    "hidden_size": 512,
+    "d_ff": 1344,
+    "vocab_size": 32000,
+    "context_length": 512,
+    "rope_theta": 10000.0,
+    "remove_rmsnorm": false,
+    "use_post_norm": false,
+    "norm_eps": 1e-05,
+    "remove_rope": false,
+    "ffn_type": "swiglu",
+    "qk_norm": true,
+    "tie_word_embeddings": true,
+    "zero_init_projections": true,
+    "fused_attention": true,
+    "torch_compile": true
+  },
+  "data": {
+    "train_path": "data/tokenized/owt_train.npy",
+    "valid_path": "data/tokenized/owt_valid.npy",
+    "batch_size": 32
+  },
+  "optim": {
+    "optimizer": "muon",
+    "learning_rate": 0.001,
+    "lr_min": 0.0001,
+    "warmup_iters": 400,
+    "total_iters": 10000,
+    "betas": [
+      0.9,
+      0.95
+    ],
+    "eps": 1e-08,
+    "weight_decay": 0.1,
+    "max_grad_norm": 1.0,
+    "muon_learning_rate": 0.02,
+    "muon_lr_min": 0.002,
+    "muon_momentum": 0.95,
+    "muon_weight_decay": 0.0,
+    "muon_nesterov": true,
+    "muon_ns_steps": 5
+  },
+  "run": {
+    "output_dir": "experiments/artifacts/iters10k/owt_ctx512_final_fused_compile_bf16",
+    "device": "cuda:0",
+    "dtype": "bf16",
+    "seed": 42,
+    "resume": false,
+    "save_interval": 1000,
+    "eval_interval": 1000,
+    "eval_iters": 20,
+    "eval_batch_size": 16,
+    "log_interval": 50,
+    "wandb": false,
+    "wandb_project": "cs336-assignment1",
+    "wandb_run": null,
+    "wandb_entity": null
+  }
+}

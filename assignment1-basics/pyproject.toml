@@ -16,6 +16,7 @@ dependencies = [
     "tiktoken>=0.12.0",
     "torch~=2.11.0",
     "tqdm>=4.67",
+    "tyro>=0.9",        # generate the CLI from nested dataclasses
     "wandb>=0.25",
     "ty>=0.0.26",
     "ruff>=0.15.8",

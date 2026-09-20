@@ -33,9 +33,8 @@ run_train() {
   mkdir -p "${out_dir}"
   echo "=== ${out_dir} ==="
   "${PYTHON[@]}" \
-    --device "${DEVICE}" \
-    --checkpoint_path "${out_dir}/ckpt.pt" \
-    --log_path "${log_path}" \
+    --run.device "${DEVICE}" \
+    --run.output_dir "${out_dir}" \
     "$@"
 }
 
@@ -48,11 +47,11 @@ run_lr() {
     local lr="${peaks[$i]}"
     local lr_min="${mins[$i]}"
     run_train "experiments/artifacts/sweeps/lr_${lr}" \
-      --train_path "${TS_TRAIN}" \
-      --valid_path "${TS_VALID}" \
-      --vocab_size 10000 \
-      --learning_rate "${lr}" \
-      --lr_min "${lr_min}"
+      --data.train_path "${TS_TRAIN}" \
+      --data.valid_path "${TS_VALID}" \
+      --model.vocab_size 10000 \
+      --optim.learning_rate "${lr}" \
+      --optim.lr_min "${lr_min}"
   done
 }
 
@@ -65,40 +64,48 @@ run_batch() {
     local iters=$((40000 * 32 / bs))
     local warmup=$((iters / 100))
     run_train "experiments/artifacts/sweeps/batch_${bs}" \
-      --train_path "${TS_TRAIN}" \
-      --valid_path "${TS_VALID}" \
-      --vocab_size 10000 \
-      --batch_size "${bs}" \
-      --total_iters "${iters}" \
-      --warmup_iters "${warmup}" \
-      --learning_rate 1e-3 \
-      --lr_min 1e-4
+      --data.train_path "${TS_TRAIN}" \
+      --data.valid_path "${TS_VALID}" \
+      --model.vocab_size 10000 \
+      --data.batch_size "${bs}" \
+      --optim.total_iters "${iters}" \
+      --optim.warmup_iters "${warmup}" \
+      --optim.learning_rate 1e-3 \
+      --optim.lr_min 1e-4
   done
 }
 
 run_ablation() {
-  # Same TinyStories recipe as the baseline. silu d_ff is set inside TransformerLM.
+  # Same TinyStories recipe as the baseline. SiLU uses an explicit 4 * d_model
+  # inner width to approximately match the baseline SwiGLU parameter count.
   # no_rms first uses lr=1e-3; if it diverges, delete that ckpt.jsonl and rerun with a lower lr.
   local names=(nope silu post_norm no_rms)
   local name
   for name in "${names[@]}"; do
+    local model_args=()
+    case "${name}" in
+      nope) model_args+=(--model.remove_rope) ;;
+      silu) model_args+=(--model.ffn_type silu --model.d_ff 2048) ;;
+      post_norm) model_args+=(--model.use_post_norm) ;;
+      no_rms) model_args+=(--model.remove_rmsnorm) ;;
+    esac
     run_train "experiments/artifacts/ablations/${name}" \
-      --train_path "${TS_TRAIN}" \
-      --valid_path "${TS_VALID}" \
-      --vocab_size 10000 \
-      --learning_rate 1e-3 \
-      --lr_min 1e-4 \
-      --ablation "${name}"
+      --data.train_path "${TS_TRAIN}" \
+      --data.valid_path "${TS_VALID}" \
+      --model.vocab_size 10000 \
+      --optim.learning_rate 1e-3 \
+      --optim.lr_min 1e-4 \
+      "${model_args[@]}"
   done
 }
 
 run_owt() {
   run_train "experiments/artifacts/owt_lm" \
-    --train_path "${OWT_TRAIN}" \
-    --valid_path "${OWT_VALID}" \
-    --vocab_size 32000 \
-    --learning_rate 1e-3 \
-    --lr_min 1e-4
+    --data.train_path "${OWT_TRAIN}" \
+    --data.valid_path "${OWT_VALID}" \
+    --model.vocab_size 32000 \
+    --optim.learning_rate 1e-3 \
+    --optim.lr_min 1e-4
 }
 
 stage="${1:-all}"

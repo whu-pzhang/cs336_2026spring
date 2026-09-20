@@ -1,6 +1,6 @@
 # CS336 作业进度
 
-最后更新：2026-09-14
+最后更新：2026-09-20
 
 实现写在各 `assignmentN-*/`，书面草稿在 `notes/assignmentN/writeup.md`。本文件只记进度，不记题解。
 
@@ -12,7 +12,7 @@
 书面：`notes/assignment1/writeup.md`  
 推导笔记：`notes/assignment1/notes.md`
 
-当前阶段：**核心实现、TinyStories / 消融 / OWT 实验和书面草稿已齐。下一步是 leaderboard（可选）和** `writeup.pdf`**。**
+当前阶段：**作业 1 到此结束。** 必做实现、实验和书面草稿已齐；7.5 实验已跑完。非 Stanford 学生，不上交课程 / leaderboard。
 
 ### 实现
 
@@ -33,8 +33,10 @@
 | gradient clipping                                    | 完成                                                     | `optimizer.gradient_clipping`（全局 L2）               |
 | get_batch                                            | 完成                                                     | `cs336_basics/training.py` → `adapters.run_get_batch`  |
 | checkpoint save / load                               | 完成                                                     | `training.save/load_checkpoint` → 对应 adapters        |
-| 训练循环（training_together）                        | 完成；已验证训练、验证、JSONL 日志、checkpoint 和 resume | `experiments/train.py`                                 |
+| 训练循环（training_together）                        | 完成；已验证训练、验证、JSONL 日志、checkpoint 和 resume | `experiments/train.py` + `experiments/trainer/`        |
 | 架构消融开关（no RMSNorm / post-norm / NoPE / SiLU） | 完成；`--ablation` 接入训练脚本                          | `cs336_basics/llm.py`、`experiments/train.py`          |
+| Muon / WSD schedule                                  | 完成；作业 cosine helper 未改                            | `cs336_basics/optimizer.py`、`experiments/trainer/`    |
+| leaderboard 模型开关（QK-Norm / tying / zero-init / fused / compile） | 完成                                          | `cs336_basics/llm.py`、`experiments/trainer/config.py` |
 
 
 
@@ -57,7 +59,8 @@
 | adamw_accounting                            | 已完成；显存、batch size、AdamW FLOPs、H100 训练时间已补齐                                      |
 | train_bpe_tinystories / train_bpe_expts_owt | 已写；当前基于 50M/5M 子集                                                                      |
 | tokenizer_experiments                       | 已写；2.7(d) 已用 10K/32K 词表重编码                                                            |
-| 第 5–7 节训练 / 消融 / OWT                  | TinyStories 主实验、LR / batch、生成、7.3 消融、7.4 OWT 已记；leaderboard 与 `writeup.pdf` 未做 |
+| 第 5–7 节训练 / 消融 / OWT                  | TinyStories 主实验、LR / batch、生成、7.3 消融、7.4 OWT 已记 |
+| 7.5 leaderboard（可选）                     | 实验已完成；不上交课程榜 / 不写入 writeup（非 Stanford）     |
 
 
 
@@ -76,15 +79,18 @@
 - [x] TinyStories batch size sweep（16 / 32 / 64 / 128，对齐 token；32 与 128 接近，16 更差）
 - [x] 架构消融（NoPE / SiLU / post-norm / 去 RMSNorm；`1e-3` 去 norm 发散，`1e-4` 最终 valid 2.188）
 - [x] OWT 主实验（同架构 40k；最终 valid 4.056，约 45.5 min；生成样例已记）
-- [ ] leaderboard（7.5，可选；45 min B200，OWT valid < 5.0）
-- [ ] 将 `notes/assignment1/writeup.md` 排成 `writeup.pdf`
+- [x] 训练脚本重构子项目 1：拆成 `experiments/trainer/` 包（config / builder / metrics / loop），
+      config 成为可序列化对象并落盘 `config.json`；行为门禁（100 步 loss 逐位相同）通过
+- [x] leaderboard 10k 消融扫（`experiments/artifacts/iters10k/`；QK-Norm / tying / Muon / zero-init / L6 / fused+compile）
+- [x] leaderboard 50k 长跑（可选 7.5；5090 D，batch 64，fused+compile；WSD valid **3.496** @ 78.9 min，cosine 3.513 @ 78.7 min；均 < 5.0。正式榜是 45 min B200）
+      最佳 checkpoint：`experiments/artifacts/leaderboard/final/`（WSD）。配置：`experiments/configs/owt_ctx512_final_bf16.json`
+- [x] 课程提交跳过（非 Stanford：不上榜、不排 `writeup.pdf`、不打包）
 
 
 
 ### 建议下一步
 
-1. 决定是否做 leaderboard（7.5）
-2. 把书面草稿排成 `writeup.pdf`
+Assignment 1 到此结束。下一份是 Assignment 2 — Systems。
 
 ---
 

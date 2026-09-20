@@ -70,22 +70,17 @@ def decode_sequence(
 
 
 if __name__ == "__main__":
-    from cs336_basics.llm import TransformerLM
-    from tokenize_datasets import load_tokenizer
+    from pathlib import Path
 
-    ckpt_path = "experiments/artifacts/tinystories_lm/ckpt.pt"
+    from tokenize_datasets import load_tokenizer
+    from trainer.builder import build_model
+    from trainer.config import load_model_config
+
+    run_dir = Path("experiments/artifacts/tinystories_lm")
     device = "cuda"
 
-    m = TransformerLM(
-        vocab_size=10000,
-        context_length=256,
-        num_layers=4,
-        d_model=512,
-        num_heads=16,
-        d_ff=1344,
-        theta=10000,
-    )
-    state_dict = torch.load(ckpt_path, map_location="cpu")["model_state"]
+    m = build_model(load_model_config(run_dir / "config.json"))
+    state_dict = torch.load(run_dir / "ckpt.pt", map_location="cpu")["model_state"]
     m.load_state_dict(state_dict)
     m.to(device)
     m.eval()

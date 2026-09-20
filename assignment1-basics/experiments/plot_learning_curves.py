@@ -190,6 +190,162 @@ def main() -> None:
         "ablation_silu.png",
     )
     plot_train_valid(owt, "OpenWebText", "owt_main.png", ylim=(3.8, 6.5))
+    plot_leaderboard()
+    plot_iters10k()
+
+
+def plot_leaderboard() -> None:
+    runs = [
+        ("baseline", ARTIFACTS / "leaderboard" / "owt_ctx512_bf16" / "ckpt.jsonl"),
+        ("QKNorm", ARTIFACTS / "leaderboard" / "owt_ctx512_qknorm_bf16" / "ckpt.jsonl"),
+        ("tying", ARTIFACTS / "leaderboard" / "owt_ctx512_weight_tying_bf16" / "ckpt.jsonl"),
+        ("Muon", ARTIFACTS / "leaderboard" / "owt_ctx512_muon_bf16" / "ckpt.jsonl"),
+        ("QKNorm+tying", ARTIFACTS / "leaderboard" / "owt_ctx512_qknorm+tying_bf16" / "ckpt.jsonl"),
+        ("QKNorm+tying+Muon", ARTIFACTS / "leaderboard" / "owt_ctx512_qknorm+tying+muon_bf16" / "ckpt.jsonl"),
+        ("QKNorm+tying L6", ARTIFACTS / "leaderboard" / "owt_ctx512_qknorm+tying_l6_bf16" / "ckpt.jsonl"),
+    ]
+    fig, ax = plt.subplots(figsize=(11.2, 5.8))
+    for i, (label, path) in enumerate(runs):
+        if not path.is_file():
+            continue
+        rows = load_jsonl(path)
+        color = f"C{i}"
+        ax.plot(*series(rows, "train_loss"), color=color, alpha=0.35, linewidth=1.0)
+        ax.plot(
+            *series(rows, "valid_loss"),
+            color=color,
+            marker="o",
+            markersize=3.5,
+            linewidth=1.6,
+            label=label,
+        )
+    ax.set_xlabel("iters")
+    ax.set_ylabel("loss")
+    ax.set_title("OWT leaderboard: train (thin) and valid (markers)")
+    ax.set_ylim(3.5, 6.6)
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="upper right")
+    save(fig, "owt_leaderboard.png")
+
+
+def plot_iters10k() -> None:
+    root = ARTIFACTS / "iters10k"
+    runs = [
+        ("baseline", "owt_ctx512_bf16", "C0"),
+        ("Muon", "owt_ctx512_muon_bf16", "C1"),
+        ("QKNorm", "owt_ctx512_qknorm_bf16", "C2"),
+        ("tying", "owt_ctx512_weight_tying_bf16", "C3"),
+        ("zero-init", "owt_ctx512_zeroinit_bf16", "C4"),
+        ("QKNorm+tying", "owt_ctx512_qknorm+tying_bf16", "C5"),
+        ("QKNorm+tying L6", "owt_ctx512_qknorm+tying_l6_bf16", "C6"),
+        ("QKNorm+tying+Muon", "owt_ctx512_qknorm+tying+muon_bf16", "C7"),
+        ("final (+zero-init)", "owt_ctx512_final_bf16", "C8"),
+    ]
+    fig, axes = plt.subplots(1, 2, figsize=(12.2, 5.6))
+    finals = []
+    for label, stem, color in runs:
+        path = root / stem / "ckpt.jsonl"
+        if not path.is_file():
+            continue
+        rows = load_jsonl(path)
+        axes[0].plot(
+            *series(rows, "valid_loss"),
+            color=color,
+            marker="o",
+            markersize=3.5,
+            linewidth=1.6,
+            label=label,
+        )
+        axes[1].plot(
+            *series(rows, "valid_loss", "wall_time_seconds"),
+            color=color,
+            marker="o",
+            markersize=3.5,
+            linewidth=1.6,
+            label=label,
+        )
+        last_valid = next((r["valid_loss"] for r in reversed(rows) if "valid_loss" in r), None)
+        last = rows[-1]
+        finals.append((label, last_valid, last["wall_time_seconds"]))
+
+    axes[0].set_xlabel("step")
+    axes[1].set_xlabel("wall clock (s)")
+    for ax in axes:
+        ax.set_ylabel("valid loss")
+        ax.set_ylim(3.80, 6.55)
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="upper right", fontsize=8)
+    axes[0].set_title("OWT 10k sweep: valid vs step")
+    axes[1].set_title("OWT 10k sweep: valid vs wall clock")
+    save(fig, "owt_iters10k.png")
+
+    print("iters10k final valid_loss")
+    for label, valid, wall in sorted(finals, key=lambda x: x[1] if x[1] is not None else 9e9):
+        print(f"  {valid:.4f}  {wall:6.0f}s  {label}")
+
+
+def plot_final_run() -> None:
+    path = ARTIFACTS / "leaderboard" / "final" / "ckpt.jsonl"
+    rows = load_jsonl(path)
+    fig, axes = plt.subplots(1, 2, figsize=(11.2, 4.6))
+    axes[0].plot(*series(rows, "train_loss"), color="C0", alpha=0.35, linewidth=1.0, label="train")
+    axes[0].plot(
+        *series(rows, "valid_loss"),
+        color="C0",
+        marker="o",
+        markersize=4.5,
+        linewidth=1.8,
+        label="valid",
+    )
+    axes[0].axvline(1500, color="0.6", linestyle="--", linewidth=1.0)
+    axes[0].axvline(42500, color="0.6", linestyle="--", linewidth=1.0)
+    axes[0].set_xlabel("step")
+    axes[0].set_ylabel("loss")
+    axes[0].set_ylim(3.35, 5.2)
+    axes[0].set_title("OWT final: WSD L4 + Muon")
+    axes[0].grid(True, alpha=0.3)
+    axes[0].legend()
+
+    axes[1].plot(*series(rows, "learning_rate"), color="C1", linewidth=1.6, label="AdamW lr")
+    axes[1].set_xlabel("step")
+    axes[1].set_ylabel("learning rate")
+    axes[1].set_title("WSD schedule")
+    axes[1].grid(True, alpha=0.3)
+    axes[1].legend()
+    save(fig, "owt_final.png")
+
+
+def plot_cosine_vs_wsd() -> None:
+    wsd = load_jsonl(ARTIFACTS / "leaderboard" / "final" / "ckpt.jsonl")
+    cosine = load_jsonl(ARTIFACTS / "leaderboard" / "owt_ctx512_cosine_bf16" / "ckpt.jsonl")
+    fig, axes = plt.subplots(1, 2, figsize=(11.2, 4.6))
+    for rows, color, label in ((wsd, "C0", "WSD"), (cosine, "C1", "cosine")):
+        axes[0].plot(*series(rows, "train_loss"), color=color, alpha=0.30, linewidth=1.0)
+        axes[0].plot(
+            *series(rows, "valid_loss"),
+            color=color,
+            marker="o",
+            markersize=4.5,
+            linewidth=1.8,
+            label=label,
+        )
+    axes[0].axvline(1500, color="0.6", linestyle="--", linewidth=1.0)
+    axes[0].axvline(42500, color="0.6", linestyle=":", linewidth=1.0)
+    axes[0].set_xlabel("step")
+    axes[0].set_ylabel("loss")
+    axes[0].set_ylim(3.35, 5.2)
+    axes[0].set_title("valid (markers) + train (thin)")
+    axes[0].grid(True, alpha=0.3)
+    axes[0].legend()
+
+    axes[1].plot(*series(wsd, "learning_rate"), color="C0", linewidth=1.6, label="WSD")
+    axes[1].plot(*series(cosine, "learning_rate"), color="C1", linewidth=1.6, label="cosine")
+    axes[1].set_xlabel("step")
+    axes[1].set_ylabel("AdamW lr")
+    axes[1].set_title("schedule")
+    axes[1].grid(True, alpha=0.3)
+    axes[1].legend()
+    save(fig, "owt_cosine_vs_wsd.png")
 
 
 if __name__ == "__main__":

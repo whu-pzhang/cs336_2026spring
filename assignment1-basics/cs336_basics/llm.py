@@ -4,6 +4,10 @@ import math
 import torch
 from einops import einsum, rearrange
 from torch import nn
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 class Linear(nn.Module):
@@ -129,6 +133,9 @@ class MultiHeadAttention(nn.Module):
         d_model: int,
         num_heads: int,
         positional_encoder: RotaryPositionalEmbedding | None = None,
+        qk_norm: bool = False,
+        norm_eps: float = 1e-5,
+        fused_attention: bool = False,
     ) -> None:
         super().__init__()
         if positional_encoder is None:
@@ -146,20 +153,32 @@ class MultiHeadAttention(nn.Module):
 
         self.positional_encoder = positional_encoder  # RoPE
 
+        self.qk_norm = qk_norm
+        self.fused_attention = fused_attention
+        if self.qk_norm:
+            self.q_norm = RMSNorm(self.d_head, norm_eps)
+            self.k_norm = RMSNorm(self.d_head, norm_eps)
+
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor = None) -> torch.Tensor:
         q, k, v = self.q_proj(x), self.k_proj(x), self.v_proj(x)
         q = rearrange(q, "... seq_len (num_heads d_head) -> ... num_heads seq_len d_head", num_heads=self.num_heads)
         k = rearrange(k, "... seq_len (num_heads d_head) -> ... num_heads seq_len d_head", num_heads=self.num_heads)
         v = rearrange(v, "... seq_len (num_heads d_head) -> ... num_heads seq_len d_head", num_heads=self.num_heads)
 
+        if self.qk_norm:
+            q = self.q_norm(q)
+            k = self.k_norm(k)
+
         if self.positional_encoder is not None:
             q = self.positional_encoder(q, token_positions)
             k = self.positional_encoder(k, token_positions)
 
-        seq_len = x.size(-2)
-        causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=x.device)).to(torch.bool)
-
-        attn = scaled_dot_product_attention(q, k, v, causal_mask)
+        if self.fused_attention:
+            attn = nn.functional.scaled_dot_product_attention(q, k, v, dropout_p=0.0, is_causal=True)
+        else:
+            seq_len = x.size(-2)
+            causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=x.device)).to(torch.bool)
+            attn = scaled_dot_product_attention(q, k, v, causal_mask)
         attn = rearrange(attn, "... num_heads seq_len d_head -> ... seq_len (num_heads d_head)")
         result = self.output_proj(attn)
         return result
@@ -176,6 +195,8 @@ class TransformerBlock(nn.Module):
         norm_type: str = "pre",
         ffn_type: str = "swiglu",
         norm_eps: float = 1e-5,
+        qk_norm: bool = False,
+        fused_attention: bool = False,
     ) -> None:
         super().__init__()
         assert ffn_type in ["swiglu", "silu"]
@@ -189,7 +210,14 @@ class TransformerBlock(nn.Module):
             self.ln1 = nn.Identity()
             self.ln2 = nn.Identity()
 
-        self.attn = MultiHeadAttention(d_model, num_heads, positional_encoder)
+        self.attn = MultiHeadAttention(
+            d_model,
+            num_heads,
+            positional_encoder,
+            qk_norm,
+            norm_eps,
+            fused_attention,
+        )
 
         if ffn_type == "swiglu":
             self.ffn = SwiGLUFFN(d_model, d_ff)
@@ -217,12 +245,17 @@ class TransformerLM(nn.Module):
         num_heads: int,
         d_ff: int,
         rope_theta: float = None,
-        #
-        use_rmsnorm: bool = True,
-        norm_type: str = "pre",  # or "post"
-        use_rope: bool = True,
-        ffn_type: str = "swiglu",  # or "silu"
         norm_eps: float = 1e-5,
+        #
+        remove_rmsnorm: bool = False,
+        use_post_norm: bool = False,
+        remove_rope: bool = False,
+        ffn_type: str = "swiglu",  # or "silu"
+        #
+        qk_norm: bool = False,
+        tie_word_embeddings: bool = False,
+        zero_init_projections: bool = False,
+        fused_attention: bool = False,
     ) -> None:
         super().__init__()
         self.vocab_size = vocab_size
@@ -232,7 +265,7 @@ class TransformerLM(nn.Module):
         self.token_embeddings = Embedding(vocab_size, d_model)
 
         d_head = d_model // num_heads
-        self.positional_encoder = RotaryPositionalEmbedding(context_length, d_head, rope_theta) if use_rope else None
+        self.positional_encoder = None if remove_rope else RotaryPositionalEmbedding(context_length, d_head, rope_theta)
 
         self.layers = nn.ModuleList(
             [
@@ -241,16 +274,29 @@ class TransformerLM(nn.Module):
                     num_heads,
                     d_ff,
                     positional_encoder=self.positional_encoder,
-                    use_rmsnorm=use_rmsnorm,
-                    norm_type=norm_type,
+                    use_rmsnorm=not remove_rmsnorm,
+                    norm_type="post" if use_post_norm else "pre",
                     norm_eps=norm_eps,
                     ffn_type=ffn_type,
+                    qk_norm=qk_norm,
+                    fused_attention=fused_attention,
                 )
                 for _ in range(num_layers)
             ]
         )
-        self.ln_final = RMSNorm(d_model, eps=norm_eps) if use_rmsnorm else nn.Identity()
+        self.ln_final = nn.Identity() if remove_rmsnorm else RMSNorm(d_model, eps=norm_eps)
         self.lm_head = Linear(d_model, vocab_size)
+
+        if tie_word_embeddings:
+            self.lm_head.weight = self.token_embeddings.weight
+            torch.nn.init.trunc_normal_(self.lm_head.weight, std=0.02)
+
+        if zero_init_projections:
+            for block in self.layers:
+                torch.nn.init.zeros_(block.attn.output_proj.weight)
+                torch.nn.init.zeros_(block.ffn.w2.weight)
+
+        logger.info(f"number of non-embedding parameters: {self.get_num_params() / 1e6:.2f}M")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.token_embeddings(x)
@@ -259,6 +305,16 @@ class TransformerLM(nn.Module):
         x = self.ln_final(x)
         x = self.lm_head(x)
         return x
+
+    def get_num_params(self) -> int:
+        """
+        Return the number of parameters in the model.
+        For non-embedding count (default), the position embeddings get subtracted.
+        The token embeddings would too, except due to the parameter sharing these
+        params are actually used as weights in the final layer, so we include them.
+        """
+        n_params = sum(p.numel() for p in self.parameters())
+        return n_params
 
 
 def cross_entropy(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
