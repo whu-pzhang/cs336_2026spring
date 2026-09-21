@@ -7,7 +7,7 @@
 ```text
 cs336_2026/
 ├── assignment1-basics/      # Basics：tokenization, Transformer, train loop
-├── assignment2-systems/     # (稍后) kernels, DDP, profiling
+├── assignment2-systems/     # Systems：profiling, FlashAttention, DDP, FSDP
 ├── assignment3-scaling/     # (稍后) scaling laws
 ├── assignment4-data/        # (稍后) filtering, dedup
 ├── assignment5-alignment/   # (稍后) SFT / RL
@@ -31,6 +31,16 @@ uv run pytest
 ```
 
 实现代码写在 `cs336_basics/`，并通过 `tests/adapters.py` 对接测试。Handout：`cs336_assignment1_basics.pdf`。
+
+### Assignment 2 快速开始
+
+```bash
+cd assignment2-systems
+uv sync
+uv run pytest
+```
+
+官方作业 1 参考实现在 `cs336-basics/`。自己的实现写在 `cs336_systems/`，并通过 `tests/adapters.py` 对接测试。Handout：`cs336_assignment2_systems.pdf`。
 
 ## 工作流
 
